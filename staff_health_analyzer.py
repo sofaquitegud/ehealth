@@ -261,23 +261,59 @@ Analyze the health data provided below and generate a concise summary that:
         df = self.df.copy()
         
         if time_period == 'Weekly':
-            # Extract year and week number
-            df["year"] = df["date"].dt.isocalendar().year
-            df["week_number"] = df["date"].dt.isocalendar().week
-            df["time_period"] = df["year"].astype(str) + "-W" + df["week_number"].astype(str).str.zfill(2)
-            groupby_col = "time_period"
+            # Create a datetime column for the start of each ISO week (Monday)
+            df['week_start'] = df['date'] - pd.TimedeltaIndex(df['date'].dt.dayofweek, unit='D')
+            df["time_period"] = df['week_start'].dt.strftime('%Y-%m-%d')
+            
+            # Get unique time periods sorted
+            all_periods = sorted(df['time_period'].unique())
+            
+            # Get the last 6 weeks if there are at least 6 weeks of data
+            if len(all_periods) >= 6:
+                last_six_weeks = all_periods[-6:]
+                df = df[df['time_period'].isin(last_six_weeks)]
+            
+            groupby_col = 'time_period'
             
         elif time_period == 'Monthly':
-            df["time_period"] = df["date"].dt.to_period("M")
-            groupby_col = "time_period"
+            # Format as 1st day of the month in ISO 8601 (YYYY-MM-01)
+            df['year_month'] = df['date'].dt.strftime('%Y-%m')
+            df['time_period'] = df['year_month'] + "-01"  # 1st day of month
+            
+            # Get unique time periods sorted
+            all_periods = sorted(df['time_period'].unique())
+            
+            # Get the last 6 months if there are at least 6 months of data
+            if len(all_periods) >= 6:
+                last_six_months = all_periods[-6:]
+                df = df[df['time_period'].isin(last_six_months)]
+            
+            groupby_col = 'time_period'
             
         elif time_period == 'Quarterly':
-            df["time_period"] = df["date"].dt.to_period("Q")
-            groupby_col = "time_period"
+            # Add quarter information
+            df['year'] = df['date'].dt.year
+            df['quarter'] = df['date'].dt.quarter
+            
+            # Format as 1st day of the quarter in ISO 8601
+            df['time_period'] = df.apply(
+                lambda x: f"{x['year']}-{(x['quarter']-1)*3+1:02d}-01",  # First day of quarter
+                axis=1
+            )
+            
+            # Get unique time periods sorted
+            all_periods = sorted(df['time_period'].unique())
+            
+            # Get the last 6 quarters if there are at least 6 quarters of data
+            if len(all_periods) >= 6:
+                last_six_quarters = all_periods[-6:]
+                df = df[df["time_period"].isin(last_six_quarters)]
+            
+            groupby_col = 'time_period'
             
         elif time_period == 'Yearly':
-            df["time_period"] = df["date"].dt.year
-            groupby_col = "time_period"
+            df['time_period'] = df['date'].dt.year
+            groupby_col = 'time_period'
         else:
             raise ValueError(f"Invalid time period: {time_period}")
         
@@ -456,8 +492,8 @@ if __name__ == "__main__":
     # Generate report
     generated_report = analyzer.run_analysis(
         report_type='Trending', # Latest | Trending
-        health_measure='Wellness', # Overall | BMI | Hypertension | Stress | Wellness
-        category='Quarterly', # (Age range, Gender type, BMI) (Weekly, Monthly, Quarterly, Yearly)
+        health_measure='Hypertension', # Overall | BMI | Hypertension | Stress | Wellness
+        category='Weekly', # (Age range, Gender type, BMI) (Weekly, Monthly, Quarterly, Yearly)
         with_summary=False  # Set to True if have an API key
     )
 
