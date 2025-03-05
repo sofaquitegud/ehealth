@@ -261,24 +261,10 @@ Analyze the health data provided below and generate a concise summary that:
         df = self.df.copy()
         
         if time_period == 'Weekly':
-            # Get the max date
-            max_date = df['date'].max()
-            
-            # Generate the last 6 weeks based on ISO calendar
-            weeks_range = pd.date_range(
-                end=max_date, 
-                periods=6, 
-                freq='W-MON'  # Use Monday as the start of the week per ISO 8601
-            )
-            
-            # Filter data for these 6 weeks
-            df = df[df['date'].isin(weeks_range)].reset_index(drop=True)
-            
-            # Create time period label in YYYY-MM-DD format
-            def format_week_period(date):
-                return date.strftime('%Y-%m-%d')
-            
-            df['time_period'] = df['date'].apply(format_week_period)
+            # Filter data for the last 6 weeks
+            df = df[df['date'] >= df['date'].max() - pd.Timedelta(weeks=6)].reset_index()
+
+            df['time_period'] = df['date'].dt.to_period('W')
             groupby_col = 'time_period'
 
         elif time_period == 'Monthly':
@@ -289,30 +275,10 @@ Analyze the health data provided below and generate a concise summary that:
             groupby_col = 'time_period'
 
         elif time_period == 'Quarterly':
-            # Use ISO 8601 caledar for quarters
-            max_date = df['date'].max()
-            max_year = max_date.year
+            # Filter data for the last 6 quarters
+            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=6*3)].reset_index()
 
-            # Generate the last 6 quarters starting from the max date's year
-            # Use ISO 8601 which defines Q1 as Jan-Mar, Q2 as Apr-Jun, etc.
-            quarters = pd.period_range(
-                start=f"{max_year}Q1",
-                end=f"{max_year}Q4",
-                freq='Q'
-            )
-
-            # Find the last 6 quarters
-            last_6_quarters = quarters[-6:]
-
-            # Filter data to only include these quarters
-            df = df[df['date'].dt.to_period('Q').isin(last_6_quarters)].reset_index()
-
-            # Format time_period as YY-MM-DD using the last date of each quarter
-            def format_quarter_period(row):
-                quarter_last_day = row['date'].to_period('Q').end_time
-                return quarter_last_day.strftime("%y-%m-%d")
-
-            df['time_period'] = df.apply(format_quarter_period, axis=1)
+            df['time_period'] = df['date'].dt.to_period('Q').apply(lambda x: x.start_time.strftime('%Y-%m-%d'))
             groupby_col = 'time_period'
 
         elif time_period == 'Yearly':
