@@ -70,9 +70,9 @@ async def get_report_types():
 
 @app.get("/report", response_model=ReportResponse, tags=["Reports"])
 async def get_report(
-    report_type: str = Query(..., description="Type of report: Latest or Trending"),
-    health_measure: str = Query(..., description="Health measure to analyze"),
-    category: str = Query(..., description="Category or time period for the report"),
+    report_type: str = Query('Trending', description="Type of report: Latest or Trending"),
+    health_measure: str = Query('Overall', description="Health measure to analyze"),
+    category: str = Query('Quarterly', description="Category or time period for the report"),
     with_summary: bool = Query(False, description="Whether to include a natural language summary"),
     analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
 ):
