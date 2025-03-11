@@ -1,0 +1,11 @@
+__pycache__
+.ipynb_checkpoints
+misc
+reports
+.env
+Dockerfile
+docker-compose.yml
+staff_health_data.csv
+staff_health_data(1).csv
+code_consolidate.ipynb
+healthmeasure_visualcategory_df.ipynb
