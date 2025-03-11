@@ -3,6 +3,12 @@ import pandas as pd
 from typing import Dict, Optional
 from enum import Enum
 import os
+import matplotlib.pyplot as plt
+import numpy as np
+
+Enable_Display = True # True or False
+
+
 try:
     from langchain_openai import ChatOpenAI
     LLM_AVAILABLE = True
@@ -47,13 +53,52 @@ class StaffHealthAnalyzer:
         
         # Convert date column to datetime
         self.df["date"] = pd.to_datetime(self.df["date"])
+
+        # Categorize BMI
+        def categorize_bmi(bmi):
+            if bmi is None or pd.isna(bmi):
+                return ""
+            elif bmi < 18.5:
+                return "underweight"
+            elif 18.5 <= bmi < 25:
+                return "normal"
+            elif 25 <= bmi < 30:
+                return "overweight"
+            else:
+                return "obese"
         
         # Save original values before any mappings
-        self.df['original_hypertension'] = self.df['hypertensionRisk']
-        self.df['original_stress'] = self.df['stressLevel']
-        self.df['original_wellness'] = self.df['wellnessLevel']
-        self.df['original_bmi'] = self.df['bmi']
-        
+        self.df['original_hypertension'] = self.df['hypertensionRisk'].fillna('').replace('', np.nan)
+        self.df['original_stress'] = self.df['stressLevel'].fillna('').replace('', np.nan)
+        self.df['original_wellness'] = self.df['wellnessLevel'].fillna('').replace('', np.nan)
+        try:
+            self.df['original_bmi'] = self.df['bmi'].apply(categorize_bmi).replace('', np.nan)
+        except: # To manage missing BMI data specifically for kiosk usage
+            self.df['bmi'] = [22]*len(self.df)
+            self.df['original_bmi'] = self.df['bmi'].apply(categorize_bmi).replace('', np.nan)
+
+        handling_missing_value = 0 # 0: 1st option; else for 2nd option
+        if handling_missing_value == 0:
+            # 1st option
+            # Forward fill: Fill missing values with the last known non-missing value
+            self.df['original_hypertension'] = self.df['original_hypertension'].ffill()
+            self.df['original_stress'] = self.df['original_stress'].ffill()
+            self.df['original_wellness'] = self.df['original_wellness'].ffill()
+            self.df['original_bmi'] = self.df['original_bmi'].ffill()
+
+            # Backward fill: Fill missing values with the next known non-missing value
+            self.df['original_hypertension'] = self.df['original_hypertension'].bfill()
+            self.df['original_stress'] = self.df['original_stress'].bfill()
+            self.df['original_wellness'] = self.df['original_wellness'].bfill()
+            self.df['original_bmi'] = self.df['original_bmi'].bfill()
+        else:
+            # 2nd option
+            # Fixed Value fill: Fill Missing Values with a Fixed Value
+            self.df['original_hypertension'] = self.df['original_hypertension'].fillna("medium")
+            self.df['original_stress'] = self.df['original_stress'].fillna("normal")
+            self.df['original_wellness'] = self.df['original_wellness'].fillna("medium")
+            self.df['original_bmi'] = self.df['original_bmi'].fillna("normal")
+
         # Define value mappings
         self.stress_map = {
             "low": 1, 
@@ -104,7 +149,7 @@ class StaffHealthAnalyzer:
             'Gender type': 'gender',
             'BMI': 'original_bmi'
         }
-        
+
         # Process age ranges
         self._process_age_ranges()
         
@@ -119,38 +164,37 @@ class StaffHealthAnalyzer:
         
         # Define system prompt for LLM
         self.system_prompt = """Act as a health data analyst tasked with summarizing the health status of employees in a company. Below are the specifications for the report:
-
-*Report Type*: {report_type}  
-*Health Measurement*: {health_measurement}  
-*Visualization Category*: {visualization_category}  
-*Data*:{data}
-
-### Input Data Structure
-- *Report Type*:
-  - *Latest*: Snapshot of current health metrics.
-  - *Trending*: Trends over time (e.g., weekly/monthly changes).
-- *Health Measurement*:
-  - Overall | Hypertension | Stress | Wellness | BMI
-  - Overall represents the cumulative overall metrics that are derived from 
-- *Visualization Category*:
-  - If Report Type = latest
-  - *Visualization Category* : Overall | By Age Range | By Gender | By BMI
-  - If Report Type = trending
-  - *Visualization Category* : weekly | monthly | quarterly | yearly
-- *Data*:
-  - Corresponding data of {report_type} {health_measurement} and {visualization_category} in table format
-
-### Task
-Analyze the health data provided below and generate a concise summary that:
-1. Highlights key findings for the *{health_measurement}* metric.
-2. Compares trends or current status based on the *{report_type}* type.
-
-### Input Data
-{data}
-
-### Expected Output Format
-- A 3-5 sentence summary in plain English.
-- Focus on clarity, relevance, and data-driven conclusions."""
+        *Report Type*: {report_type}  
+        *Health Measurement*: {health_measurement}  
+        *Visualization Category*: {visualization_category}  
+        *Data*:{data}
+        
+        ### Input Data Structure
+        - *Report Type*:
+          - *Latest*: Snapshot of current health metrics.
+          - *Trending*: Trends over time (e.g., weekly/monthly changes).
+        - *Health Measurement*:
+          - Overall | Hypertension | Stress | Wellness | BMI
+          - Overall represents the cumulative overall metrics that are derived from 
+        - *Visualization Category*:
+          - If Report Type = latest
+          - *Visualization Category* : Overall | By Age Range | By Gender | By BMI
+          - If Report Type = trending
+          - *Visualization Category* : weekly | monthly | quarterly | yearly
+        - *Data*:
+          - Corresponding data of {report_type} {health_measurement} and {visualization_category} in table format
+        
+        ### Task
+        Analyze the health data provided below and generate a concise summary that:
+        1. Highlights key findings for the *{health_measurement}* metric.
+        2. Compares trends or current status based on the *{report_type}* type.
+        
+        ### Input Data
+        {data}
+        
+        ### Expected Output Format
+        - A 3-5 sentence summary in plain English.
+        - Focus on clarity, relevance, and data-driven conclusions."""
         
     def _process_age_ranges(self):
         """Process age ranges with correct labels"""
@@ -159,8 +203,21 @@ Analyze the health data provided below and generate a concise summary that:
             bins=[0, 25, 35, 45, 55, 100],
             labels=['18-25', '26-35', '36-45', '46-55', '55+']
         )
-    
+
     def apply_mappings(self):
+
+        # Determine Overall Health category
+        def overall_health_category(overall_health_value):
+            if overall_health_value <= 2:
+                overall_health = 'healthy'
+            elif 2 < overall_health_value <= 3:
+                overall_health = 'mild'
+            elif 3 < overall_health_value <= 4:
+                overall_health = 'elevated'
+            else:
+                overall_health = 'risky'
+            return overall_health
+
         """Apply numeric mappings to categorical data"""
         self.df['stressLevel'] = self.df['original_stress'].map(self.stress_map)
         self.df['wellnessLevel'] = self.df['original_wellness'].map(self.wellness_map)
@@ -176,9 +233,10 @@ Analyze the health data provided below and generate a concise summary that:
                 0.25 * self.df['hypertensionRisk'] +
                 0.15 * self.df['bmi']
             )
+            self.df['overallHealth'] = self.df['overallHealth'].apply(overall_health_category)
             
         return self.df
-    
+
     def get_latest_data(self) -> pd.DataFrame:
         """Get most recent data for each staff member"""
         return self.df.sort_values('date').groupby('staff_id').last().reset_index()
@@ -262,28 +320,28 @@ Analyze the health data provided below and generate a concise summary that:
         
         if time_period == 'Weekly':
             # Filter data for the last 6 weeks
-            df = df[df['date'] >= df['date'].max() - pd.Timedelta(weeks=6)].reset_index()
+            df = df[df['date'] >= df['date'].max() - pd.Timedelta(weeks=5)].reset_index()
 
             df['time_period'] = df['date'].dt.to_period('W')
             groupby_col = 'time_period'
 
         elif time_period == 'Monthly':
             # Filter data for the last 6 months
-            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=6)].reset_index()
+            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=5)].reset_index()
 
             df['time_period'] = df['date'].dt.to_period('M')
             groupby_col = 'time_period'
 
         elif time_period == 'Quarterly':
             # Filter data for the last 6 quarters
-            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=6*3)].reset_index()
+            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=6*3-2)].reset_index()
 
             df['time_period'] = df['date'].dt.to_period('Q').apply(lambda x: x.start_time.strftime('%Y-%m-%d'))
             groupby_col = 'time_period'
 
         elif time_period == 'Yearly':
             # Filter data for the last 6 years
-            df = df[df['date'] >= df['date'].max() - pd.DateOffset(years=6)].reset_index()
+            df = df[df['date'] >= df['date'].max() - pd.DateOffset(years=5)].reset_index()
 
             df['time_period'] = df['date'].dt.year
             groupby_col = 'time_period'
@@ -314,7 +372,7 @@ Analyze the health data provided below and generate a concise summary that:
         
         # Calculate percentage within each time period based on total count in that period
         total_count = df_trend.groupby(groupby_col)['Count'].transform('sum')
-        df_trend['Percentage'] = ((df_trend['Count'] / total_count) * 100).round(2)
+        df_trend['Percentage'] = ((df_trend['Count']/total_count)*100).round(2)
         
         # Convert time_period to string for consistent output
         df_trend[groupby_col] = df_trend[groupby_col].astype(str)
@@ -444,6 +502,65 @@ Analyze the health data provided below and generate a concise summary that:
         
         if with_summary and self.llm:
             result["summary"] = self.get_report_summary(report_type, health_measure, category, data)
+
+
+        df_plot = result["data"]
+
+        # Check if dataframe is not empty
+        if not df_plot.empty and Enable_Display :
+            time_column = df_plot.columns[0]  # The first column (time period e.g., year_week)
+            category_column = df_plot.columns[1]  # The health measure category (e.g., 'Stress Level', 'Hypertension Risk', etc.)
+
+            plt.figure(figsize=(12, 6))
+
+            # Get unique categories (e.g., different health conditions)
+            unique_categories = df_plot[category_column].unique()
+
+            # Define color palette
+            #colors = plt.cm.get_cmap("tab10", len(unique_categories))
+            colors = plt.get_cmap("tab10", len(unique_categories))
+
+            if report_type == 'Trending':
+                # Plot each category separately
+                for idx, category in enumerate(unique_categories):
+                    category_data = df_plot[df_plot[category_column] == category]
+                    plt.plot(category_data[time_column], category_data["Percentage"],
+                             marker="o", linestyle="-", label=f"{category}", color=colors(idx))
+
+                # Formatting
+                plt.xlabel(time_column, fontsize=12)
+                plt.ylabel("Percentage (%)", fontsize=12)
+                plt.title(f"Trend Analysis: {category_column} Over {time_column}", fontsize=14)
+                plt.xticks(rotation=45)
+                plt.grid(True, linestyle="--", alpha=0.6)
+
+
+            else:
+                # Set width for bars
+                bar_width = 0.2
+                positions = np.arange(len(df_plot[time_column].unique()))  # Positions for bars
+
+                # Create bars for each category
+                for idx, category in enumerate(unique_categories):
+                    category_data = df_plot[df_plot[category_column] == category]
+
+                    plt.bar(positions + (idx * bar_width), category_data["Percentage"],
+                            width=bar_width, label=f"{category}", color=colors(idx))
+
+                # Formatting
+                plt.xlabel(time_column, fontsize=12)
+                plt.ylabel("Percentage (%)", fontsize=12)
+                plt.title(f"Latest Analysis: {category_column} Over {time_column}", fontsize=14)
+                plt.xticks(positions + (bar_width * (len(unique_categories) / 2)), df_plot[time_column].unique(), rotation=45)
+                plt.grid(axis="y", linestyle="--", alpha=0.6)
+
+            # Add legend
+            plt.legend(loc="upper right")
+
+            # Show plot
+            plt.show()
+
+
         
         return result
 
@@ -452,8 +569,8 @@ Analyze the health data provided below and generate a concise summary that:
 if __name__ == "__main__":
     # Initialize the analyzer
     analyzer = StaffHealthAnalyzer(
-        data_path='staff_health_data.csv',
-        api_key=os.getenv("OPENAI_API_KEY")
+        data_path='staff_health_data(1).csv',
+        api_key=os.getenv("OPENAI_API_KEY",'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')
     )
 
     """
@@ -464,14 +581,15 @@ if __name__ == "__main__":
 
     # Generate report
     generated_report = analyzer.run_analysis(
-        report_type='Trending', # Latest | Trending
+        report_type='Latest', # Latest | Trending
         health_measure='Hypertension', # Overall | BMI | Hypertension | Stress | Wellness
-        category='Weekly', # (Age range, Gender type, BMI) (Weekly, Monthly, Quarterly, Yearly)
+        category='BMI', # (Age range, Gender type, BMI) (Weekly, Monthly, Quarterly, Yearly)
         with_summary=False  # Set to True if have an API key
     )
 
-    print('Generated Report:')
-    print(generated_report['data'])
+    if Enable_Display:
+        print('Generated Report:')
+        print(generated_report['data'])
 
     # Print summary if available
     if 'summary' in generated_report:

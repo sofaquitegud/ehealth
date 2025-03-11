@@ -1,13 +1,10 @@
+# staff_health_analyzer.py
 import pandas as pd
+import numpy as np
 import os
+import matplotlib.pyplot as plt
 from typing import Dict, Optional
-from preprocessing import (
-    DataPreprocessor, 
-    HealthMeasure, 
-    VisualizationCategory, 
-    TimePeriod,
-    ReportType
-)
+from enum import Enum
 
 try:
     from langchain_openai import ChatOpenAI
@@ -16,23 +13,47 @@ except ImportError:
     LLM_AVAILABLE = False
     print('Import unsuccessful. Please `pip install langchain_openai`')
 
+class VisualizationCategory(Enum):
+    OVERALL = 'Overall'
+    AGE_RANGE = 'Age range'
+    GENDER = 'Gender type'
+    BMI = 'BMI'
+
+class TimePeriod(Enum):
+    WEEKLY = 'Weekly'
+    MONTHLY = 'Monthly'
+    QUARTERLY = 'Quarterly'
+    YEARLY = 'Yearly'
+
+class ReportType(Enum):
+    LATEST = 'Latest'
+    TRENDING = 'Trending'
+
 class StaffHealthAnalyzer:
-    def __init__(self, preprocessor: DataPreprocessor, api_key: Optional[str] = None):
+    def __init__(self, processed_data: pd.DataFrame, measurement_mappings: dict, display_names: dict, api_key: Optional[str] = None):
         """
         Initialize the health analyzer with preprocessed staff health data
         
         Parameters:
-        preprocessor (DataPreprocessor): Preprocessor instance with processed data
+        processed_data (pd.DataFrame): Preprocessed staff health data
+        measurement_mappings (dict): Mapping between health measures and dataframe columns
+        display_names (dict): Mapping between health measures and display names
         api_key (str, optional): OpenAI API key for natural language summaries
         """
-        # Get the preprocessed dataframe
-        self.df = preprocessor.get_data()
+        # Store processed data
+        self.df = processed_data
         
-        # Get all the mappings from preprocessor
-        mappings = preprocessor.get_mappings()
-        self.measurement_mappings = mappings["measurement_mappings"]
-        self.display_names = mappings["display_names"]
-        self.visualization_mappings = mappings["visualization_mappings"]
+        # Store mappings
+        self.measurement_mappings = measurement_mappings
+        self.display_names = display_names
+        
+        # Visualization category mappings
+        self.visualization_mappings = {
+            'Overall': 'overall',
+            'Age range': 'age_range',
+            'Gender type': 'gender',
+            'BMI': 'original_bmi'
+        }
         
         # Initialize LLM if API key is provided
         self.llm = None
@@ -42,38 +63,41 @@ class StaffHealthAnalyzer:
         
         # Define system prompt for LLM
         self.system_prompt = """Act as a health data analyst tasked with summarizing the health status of employees in a company. Below are the specifications for the report:
+        *Report Type*: {report_type}  
+        *Health Measurement*: {health_measurement}  
+        *Visualization Category*: {visualization_category}  
+        *Data*:{data}
+        
+        ### Input Data Structure
+        - *Report Type*:
+          - *Latest*: Snapshot of current health metrics.
+          - *Trending*: Trends over time (e.g., weekly/monthly changes).
+        - *Health Measurement*:
+          - Overall | Hypertension | Stress | Wellness | BMI
+          - Overall represents the cumulative overall metrics that are derived from 
+        - *Visualization Category*:
+          - If Report Type = latest
+          - *Visualization Category* : Overall | By Age Range | By Gender | By BMI
+          - If Report Type = trending
+          - *Visualization Category* : weekly | monthly | quarterly | yearly
+        - *Data*:
+          - Corresponding data of {report_type} {health_measurement} and {visualization_category} in table format
+        
+        ### Task
+        Analyze the health data provided below and generate a concise summary that:
+        1. Highlights key findings for the *{health_measurement}* metric.
+        2. Compares trends or current status based on the *{report_type}* type.
+        
+        ### Input Data
+        {data}
+        
+        ### Expected Output Format
+        - A 3-5 sentence summary in plain English.
+        - Focus on clarity, relevance, and data-driven conclusions."""
 
-*Report Type*: {report_type}  
-*Health Measurement*: {health_measurement}  
-*Visualization Category*: {visualization_category}  
-*Data*:{data}
-
-### Input Data Structure
-- *Report Type*:
-  - *Latest*: Snapshot of current health metrics.
-  - *Trending*: Trends over time (e.g., weekly/monthly changes).
-- *Health Measurement*:
-  - Overall | Hypertension | Stress | Wellness | BMI
-  - Overall represents the cumulative overall metrics that are derived from 
-- *Visualization Category*:
-  - If Report Type = latest
-  - *Visualization Category* : Overall | By Age Range | By Gender | By BMI
-  - If Report Type = trending
-  - *Visualization Category* : weekly | monthly | quarterly | yearly
-- *Data*:
-  - Corresponding data of {report_type} {health_measurement} and {visualization_category} in table format
-
-### Task
-Analyze the health data provided below and generate a concise summary that:
-1. Highlights key findings for the *{health_measurement}* metric.
-2. Compares trends or current status based on the *{report_type}* type.
-
-### Input Data
-{data}
-
-### Expected Output Format
-- A 3-5 sentence summary in plain English.
-- Focus on clarity, relevance, and data-driven conclusions."""
+    def get_latest_data(self) -> pd.DataFrame:
+        """Get most recent data for each staff member"""
+        return self.df.sort_values('date').groupby('staff_id').last().reset_index()
     
     def generate_latest_report(self, health_measure: str, visualization_cat: str) -> pd.DataFrame:
         """
@@ -87,7 +111,7 @@ Analyze the health data provided below and generate a concise summary that:
         pd.DataFrame: Report data
         """
         # Get the latest data
-        data = self.df.sort_values('date').groupby('staff_id').last().reset_index()
+        data = self.get_latest_data()
         
         # Get measure column name
         measure_col = self.measurement_mappings[health_measure]
@@ -154,28 +178,28 @@ Analyze the health data provided below and generate a concise summary that:
         
         if time_period == 'Weekly':
             # Filter data for the last 6 weeks
-            df = df[df['date'] >= df['date'].max() - pd.Timedelta(weeks=6)].reset_index()
+            df = df[df['date'] >= df['date'].max() - pd.Timedelta(weeks=5)].reset_index()
 
             df['time_period'] = df['date'].dt.to_period('W')
             groupby_col = 'time_period'
 
         elif time_period == 'Monthly':
             # Filter data for the last 6 months
-            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=6)].reset_index()
+            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=5)].reset_index()
 
             df['time_period'] = df['date'].dt.to_period('M')
             groupby_col = 'time_period'
 
         elif time_period == 'Quarterly':
             # Filter data for the last 6 quarters
-            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=6*3)].reset_index()
+            df = df[df['date'] >= df['date'].max() - pd.DateOffset(months=6*3-2)].reset_index()
 
             df['time_period'] = df['date'].dt.to_period('Q').apply(lambda x: x.start_time.strftime('%Y-%m-%d'))
             groupby_col = 'time_period'
 
         elif time_period == 'Yearly':
             # Filter data for the last 6 years
-            df = df[df['date'] >= df['date'].max() - pd.DateOffset(years=6)].reset_index()
+            df = df[df['date'] >= df['date'].max() - pd.DateOffset(years=5)].reset_index()
 
             df['time_period'] = df['date'].dt.year
             groupby_col = 'time_period'
@@ -206,7 +230,7 @@ Analyze the health data provided below and generate a concise summary that:
         
         # Calculate percentage within each time period based on total count in that period
         total_count = df_trend.groupby(groupby_col)['Count'].transform('sum')
-        df_trend['Percentage'] = ((df_trend['Count'] / total_count) * 100).round(2)
+        df_trend['Percentage'] = ((df_trend['Count']/total_count)*100).round(2)
         
         # Convert time_period to string for consistent output
         df_trend[groupby_col] = df_trend[groupby_col].astype(str)
@@ -219,21 +243,25 @@ Analyze the health data provided below and generate a concise summary that:
         
         return df_trend
     
-    def generate_all_latest_reports(self) -> Dict[str, pd.DataFrame]:
+    def generate_all_latest_reports(self, health_measures, visualization_categories) -> Dict[str, pd.DataFrame]:
         """Generate all required latest report combinations
+        
+        Parameters:
+        health_measures (list): List of health measures
+        visualization_categories (list): List of visualization categories
         
         Returns:
         Dict[str, pd.DataFrame]: Dictionary of all reports with keys formatted as 'measure_category'
         """
         reports = {}
         
-        # Define required combinations based on the requirement table
+        # Define required combinations based on the inputs
         # Excluding BMI|BMI which is not in the requirements
         required_combinations = [
-            (measure.value, category.value)
-            for measure in HealthMeasure
-            for category in VisualizationCategory
-            if not (measure.value == 'BMI' and category.value == 'BMI')
+            (measure, category)
+            for measure in health_measures
+            for category in visualization_categories
+            if not (measure == 'BMI' and category == 'BMI')
         ]
         
         # Generate each report
@@ -246,8 +274,12 @@ Analyze the health data provided below and generate a concise summary that:
             
         return reports
     
-    def generate_all_trending_reports(self) -> Dict[str, pd.DataFrame]:
+    def generate_all_trending_reports(self, health_measures, time_periods) -> Dict[str, pd.DataFrame]:
         """Generate all required trending report combinations
+        
+        Parameters:
+        health_measures (list): List of health measures
+        time_periods (list): List of time periods
         
         Returns:
         Dict[str, pd.DataFrame]: Dictionary of all reports with keys formatted as 'measure_timeperiod'
@@ -256,9 +288,9 @@ Analyze the health data provided below and generate a concise summary that:
         
         # Define required combinations
         required_combinations = [
-            (measure.value, period.value)
-            for measure in HealthMeasure
-            for period in TimePeriod
+            (measure, period)
+            for measure in health_measures
+            for period in time_periods
         ]
         
         # Generate each report
@@ -310,7 +342,7 @@ Analyze the health data provided below and generate a concise summary that:
         except Exception as e:
             return f"Error generating summary: {str(e)}"
     
-    def run_analysis(self, report_type: str, health_measure: str, category: str, with_summary: bool = False) -> Dict:
+    def run_analysis(self, report_type: str, health_measure: str, category: str, with_summary: bool = False, enable_display: bool = False) -> Dict:
         """
         Run a complete analysis for the specified parameters
         
@@ -319,6 +351,7 @@ Analyze the health data provided below and generate a concise summary that:
         health_measure (str): Health measure type (e.g., 'Overall', 'Hypertension')
         category (str): Category for latest report or time period for trending report
         with_summary (bool): Whether to include natural language summary
+        enable_display (bool): Whether to display visualization
         
         Returns:
         Dict: Dictionary containing report data and optional summary
@@ -336,5 +369,70 @@ Analyze the health data provided below and generate a concise summary that:
         
         if with_summary and self.llm:
             result["summary"] = self.get_report_summary(report_type, health_measure, category, data)
+
+        if enable_display:
+            self.visualize_report(result, report_type)
         
         return result
+    
+    def visualize_report(self, result: Dict, report_type: str):
+        """
+        Visualize the report data
+        
+        Parameters:
+        result (Dict): Report data dictionary
+        report_type (str): 'Latest' or 'Trending'
+        """
+        df_plot = result["data"]
+
+        # Check if dataframe is not empty
+        if not df_plot.empty:
+            time_column = df_plot.columns[0]  # The first column (time period e.g., year_week)
+            category_column = df_plot.columns[1]  # The health measure category
+
+            plt.figure(figsize=(12, 6))
+
+            # Get unique categories
+            unique_categories = df_plot[category_column].unique()
+
+            # Define color palette
+            colors = plt.get_cmap("tab10", len(unique_categories))
+
+            if report_type == 'Trending':
+                # Plot each category separately
+                for idx, category in enumerate(unique_categories):
+                    category_data = df_plot[df_plot[category_column] == category]
+                    plt.plot(category_data[time_column], category_data["Percentage"],
+                             marker="o", linestyle="-", label=f"{category}", color=colors(idx))
+
+                # Formatting
+                plt.xlabel(time_column, fontsize=12)
+                plt.ylabel("Percentage (%)", fontsize=12)
+                plt.title(f"Trend Analysis: {category_column} Over {time_column}", fontsize=14)
+                plt.xticks(rotation=45)
+                plt.grid(True, linestyle="--", alpha=0.6)
+
+            else:
+                # Set width for bars
+                bar_width = 0.2
+                positions = np.arange(len(df_plot[time_column].unique()))  # Positions for bars
+
+                # Create bars for each category
+                for idx, category in enumerate(unique_categories):
+                    category_data = df_plot[df_plot[category_column] == category]
+
+                    plt.bar(positions + (idx * bar_width), category_data["Percentage"],
+                            width=bar_width, label=f"{category}", color=colors(idx))
+
+                # Formatting
+                plt.xlabel(time_column, fontsize=12)
+                plt.ylabel("Percentage (%)", fontsize=12)
+                plt.title(f"Latest Analysis: {category_column} Over {time_column}", fontsize=14)
+                plt.xticks(positions + (bar_width * (len(unique_categories) / 2)), df_plot[time_column].unique(), rotation=45)
+                plt.grid(axis="y", linestyle="--", alpha=0.6)
+
+            # Add legend
+            plt.legend(loc="upper right")
+
+            # Show plot
+            plt.show()
