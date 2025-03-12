@@ -24,8 +24,8 @@ app.add_middleware(
 
 # Shared dependency to get the analyser instance
 def get_analyzer():
-    data_path = os.getenv("HEALTH_DATA_PATH", "staff_health_data.csv")
-    api_key = os.getenv("OPENAI_API_KEY", None)
+    data_path = os.getenv('HEALTH_DATA_PATH', 'staff_health_data.csv')
+    api_key = os.getenv('OPENAI_API_KEY')
 
     # Create and return analyser instance
     return StaffHealthAnalyzer(data_path=data_path, api_key=api_key)
@@ -36,7 +36,8 @@ class ReportResponse(BaseModel):
     health_measure: str
     category: str
     data: list
-    summary: Optional[str] = None
+    summary: bool = False
+    display: bool = False
 
 # API routes
 @app.get("/", tags=["Root"])
@@ -44,7 +45,7 @@ async def root():
     """Root endpoint with API information"""
     return {
         "message": "Staff Health Analysis API is running",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "docs": "/docs"
     }
 
@@ -74,6 +75,7 @@ async def get_report(
     health_measure: str = Query('Overall', description="Health measure to analyze"),
     category: str = Query('Quarterly', description="Category or time period for the report"),
     with_summary: bool = Query(False, description="Whether to include a natural language summary"),
+    enable_display: bool = Query(False, description='Whether to include visualisation'),
     analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
 ):
     """
@@ -105,7 +107,7 @@ async def get_report(
             report_type=report_type,
             health_measure=health_measure,
             category=category,
-            with_summary=with_summary
+            with_summary=with_summary,
         )
 
         # Convert DataFrame to list for JSON serialization

@@ -6,7 +6,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-Enable_Display = True # True or False
+Enable_Display = True # True or False to show visualisation
 
 
 try:
@@ -68,14 +68,19 @@ class StaffHealthAnalyzer:
                 return "obese"
         
         # Save original values before any mappings
-        self.df['original_hypertension'] = self.df['hypertensionRisk'].fillna('').replace('', np.nan)
-        self.df['original_stress'] = self.df['stressLevel'].fillna('').replace('', np.nan)
-        self.df['original_wellness'] = self.df['wellnessLevel'].fillna('').replace('', np.nan)
         try:
             self.df['original_bmi'] = self.df['bmi'].apply(categorize_bmi).replace('', np.nan)
         except: # To manage missing BMI data specifically for kiosk usage
             self.df['bmi'] = [22]*len(self.df)
             self.df['original_bmi'] = self.df['bmi'].apply(categorize_bmi).replace('', np.nan)
+        self.df['original_stress'] = self.df['stressLevel'].fillna('').replace('', np.nan)
+        self.df['original_wellness'] = self.df['wellnessLevel'].fillna('').replace('', np.nan)
+        self.df['original_hypertension'] = self.df['hypertensionRisk'].fillna('').replace('', np.nan)
+
+
+        # Managing missing values: Staff ID and Date in sequential order
+        self.df = self.df.sort_values(by=['staff_id','date'])
+        self.df.reset_index(drop=True, inplace=True)
 
         handling_missing_value = 0 # 0: 1st option; else for 2nd option
         if handling_missing_value == 0:
@@ -569,8 +574,8 @@ class StaffHealthAnalyzer:
 if __name__ == "__main__":
     # Initialize the analyzer
     analyzer = StaffHealthAnalyzer(
-        data_path='staff_health_data(1).csv',
-        api_key=os.getenv("OPENAI_API_KEY",'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')
+        data_path='staff_health_data.csv',
+        api_key=os.environ.get('OPENAI_API_KEY')
     )
 
     """
@@ -582,9 +587,9 @@ if __name__ == "__main__":
     # Generate report
     generated_report = analyzer.run_analysis(
         report_type='Latest', # Latest | Trending
-        health_measure='Hypertension', # Overall | BMI | Hypertension | Stress | Wellness
-        category='BMI', # (Age range, Gender type, BMI) (Weekly, Monthly, Quarterly, Yearly)
-        with_summary=False  # Set to True if have an API key
+        health_measure='Wellness', # Overall | BMI | Hypertension | Stress | Wellness
+        category='Age range', # (Age range, Gender type, BMI) (Weekly, Monthly, Quarterly, Yearly)
+        with_summary=True  # Set to True if have an API key
     )
 
     if Enable_Display:

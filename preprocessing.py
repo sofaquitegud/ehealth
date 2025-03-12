@@ -88,15 +88,19 @@ class StaffHealthPreprocessor:
                 return "obese"
         
         # Save original values before any mappings
-        self.df['original_hypertension'] = self.df['hypertensionRisk'].fillna('').replace('', np.nan)
-        self.df['original_stress'] = self.df['stressLevel'].fillna('').replace('', np.nan)
-        self.df['original_wellness'] = self.df['wellnessLevel'].fillna('').replace('', np.nan)
-        
         try:
             self.df['original_bmi'] = self.df['bmi'].apply(categorize_bmi).replace('', np.nan)
-        except: # To manage missing BMI data
-            self.df['bmi'] = [22] * len(self.df)
+        except: # To manage missing BMI data specifically for kiosk usage
+            self.df['bmi'] = [22]*len(self.df)
             self.df['original_bmi'] = self.df['bmi'].apply(categorize_bmi).replace('', np.nan)
+        self.df['original_stress'] = self.df['stressLevel'].fillna('').replace('', np.nan)
+        self.df['original_wellness'] = self.df['wellnessLevel'].fillna('').replace('', np.nan)
+        self.df['original_hypertension'] = self.df['hypertensionRisk'].fillna('').replace('', np.nan)
+
+
+        # Managing missing values: Staff ID and Date in sequential order
+        self.df = self.df.sort_values(by=['staff_id','date'])
+        self.df.reset_index(drop=True, inplace=True)
     
     def _handle_missing_values(self, method: int = 0):
         """Handle missing values in the data

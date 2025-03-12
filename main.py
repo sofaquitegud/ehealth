@@ -22,10 +22,10 @@ def main():
 
     # Example 1: Generate a single report
     report = analyzer.run_analysis(
-        report_type='Trending',      # 'Latest' or 'Trending'
-        health_measure='Overall',     # 'Overall', 'BMI', 'Hypertension', 'Stress', 'Wellness'
-        category='Monthly',           # For Latest: 'Overall', 'Age range', 'Gender type', 'BMI'
-                                                    # For Trending: 'Weekly', 'Monthly', 'Quarterly', 'Yearly'
+        report_type='Trending',         # 'Latest' or 'Trending'
+        health_measure='Overall',       # 'Overall', 'BMI', 'Hypertension', 'Stress', 'Wellness'
+        category='Monthly',             # For Latest: 'Overall', 'Age range', 'Gender type', 'BMI'
+                                        # For Trending: 'Weekly', 'Monthly', 'Quarterly', 'Yearly'
         with_summary=False,
         enable_display=True
     )
