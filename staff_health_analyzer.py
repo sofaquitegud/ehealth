@@ -6,9 +6,6 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-Enable_Display = True # True or False
-
-
 try:
     from langchain_openai import ChatOpenAI
     LLM_AVAILABLE = True
@@ -481,7 +478,7 @@ class StaffHealthAnalyzer:
         except Exception as e:
             return f"Error generating summary: {str(e)}"
     
-    def run_analysis(self, report_type: str, health_measure: str, category: str, with_summary: bool = False) -> Dict:
+    def run_analysis(self, report_type: str, health_measure: str, category: str, with_summary: bool = False, enable_display: bool = False) -> Dict:
         """
         Run a complete analysis for the specified parameters
         
@@ -512,7 +509,7 @@ class StaffHealthAnalyzer:
         df_plot = result["data"]
 
         # Check if dataframe is not empty
-        if not df_plot.empty and Enable_Display :
+        if not df_plot.empty and enable_display:
             time_column = df_plot.columns[0]  # The first column (time period e.g., year_week)
             category_column = df_plot.columns[1]  # The health measure category (e.g., 'Stress Level', 'Hypertension Risk', etc.)
 
@@ -575,7 +572,7 @@ if __name__ == "__main__":
     # Initialize the analyzer
     analyzer = StaffHealthAnalyzer(
         data_path='staff_health_data.csv',
-        api_key=os.getenv("OPENAI_API_KEY",'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')
+        api_key=os.environ.get("OPENAI_API_KEY")
     )
 
     """
@@ -588,13 +585,13 @@ if __name__ == "__main__":
     generated_report = analyzer.run_analysis(
         report_type='Latest', # Latest | Trending
         health_measure='Wellness', # Overall | BMI | Hypertension | Stress | Wellness
-        category='Age_range', # (Age_range, Gender, BMI) (Weekly, Monthly, Quarterly, Yearly)
-        with_summary=False  # Set to True if have an API key
+        category='Age_range', # Age_range, Gender, BMI | Weekly, Monthly, Quarterly, Yearly
+        with_summary=False,  # Set to True if have an API key
+        enable_display=True # Set to True to display visualization
     )
 
-    if Enable_Display:
-        print('Generated Report:')
-        print(generated_report['data'])
+    print('Generated Report:')
+    print(generated_report['data'])
 
     # Print summary if available
     if 'summary' in generated_report:
