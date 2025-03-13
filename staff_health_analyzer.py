@@ -6,9 +6,6 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-Enable_Display = True  # To show visualisation
-
-
 try:
     from langchain_openai import ChatOpenAI
 
@@ -520,6 +517,7 @@ class StaffHealthAnalyzer:
         health_measure: str,
         category: str,
         with_summary: bool = False,
+        enable_display: bool = False
     ) -> Dict:
         """
         Run a complete analysis for the specified parameters
@@ -581,7 +579,7 @@ class StaffHealthAnalyzer:
         df_plot = result["data"]
 
         # Check if dataframe is not empty
-        if not df_plot.empty and Enable_Display:
+        if not df_plot.empty and enable_display:
             time_column = df_plot.columns[
                 0
             ]  # The first column (time period e.g., year_week)
@@ -677,15 +675,15 @@ if __name__ == "__main__":
 
     # Generate report
     generated_report = analyzer.run_analysis(
-        report_type="trending",  # Latest | Trending
-        health_measure="wellness",  # Overall | BMI | Hypertension | Stress | Wellness
-        category="monthly",  # (Age range, Gender type, BMI) (Weekly, Monthly, Quarterly, Yearly)
+        report_type="latest",  # Latest | Trending
+        health_measure="hypertension",  # Overall | BMI | Hypertension | Stress | Wellness
+        category="gender",  # (Age range, Gender type, BMI) (Weekly, Monthly, Quarterly, Yearly)
         with_summary=False,  # Set to True if have an API key
+        enable_display=True
     )
 
-    if Enable_Display:
-        print("Generated Report:")
-        print(generated_report["data"])
+    print("Generated Report:")
+    print(generated_report["data"])
 
     # Print summary if available
     if "summary" in generated_report:
