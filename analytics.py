@@ -16,21 +16,21 @@ except ImportError:
     print("Import unsuccessful. Please `pip install langchain_openai`")
 
 
-class VisualizationCategory(Enum):
+class VisualizationCategory(str, Enum):
     OVERALL = "Overall"
     AGE_RANGE = "Age"
     GENDER = "Gender"
     BMI = "BMI"
 
 
-class TimePeriod(Enum):
+class TimePeriod(str, Enum):
     WEEKLY = "Weekly"
     MONTHLY = "Monthly"
     QUARTERLY = "Quarterly"
     YEARLY = "Yearly"
 
 
-class ReportType(Enum):
+class ReportType(str, Enum):
     LATEST = "Latest"
     TRENDING = "Trending"
 
@@ -62,7 +62,7 @@ class StaffHealthAnalyzer:
         # Visualization category mappings
         self.visualization_mappings = {
             "Overall": "overall",
-            "Age": "age_range",
+            "Age_range": "age_range",
             "Gender": "gender",
             "BMI": "original_bmi",
         }
@@ -408,40 +408,18 @@ class StaffHealthAnalyzer:
         Returns:
         Dict: Dictionary containing report data and optional summary
         """
-        # Normalize inputs to title case
-        report_type = report_type.strip().title()
-        health_measure = health_measure.strip().title()
-        category = category.strip().title()
-
-        # Validate report_type against enum
-        if report_type not in [rt.value for rt in ReportType]:
-            raise ValueError(f"Invalid report type: {report_type}")
-
-        # Validate health_measure against enum
-        if health_measure not in [hm.value for hm in HealthMeasure]:
-            raise ValueError(f"Invalid health measure: {health_measure}")
-
-        # Validate category based on report type
-        if report_type == ReportType.LATEST.value:
-            valid_categories = [vc.value for vc in VisualizationCategory]
-        else:
-            valid_categories = [tp.value for tp in TimePeriod]
-
-        if category not in valid_categories:
-            raise ValueError(f"Invalid category: {category}")
-
         result = {
             "report_type": report_type,
             "health_measure": health_measure,
             "category": category,
         }
 
-        if report_type == ReportType.LATEST.value:
+        if report_type == 'Latest':
             data = self.generate_latest_report(health_measure, category)
-        elif report_type == ReportType.TRENDING.value:
+        elif report_type == 'Trending':
             data = self.generate_trending_report(health_measure, category)
         else:
-            raise ValueError(f"Invalid report type after normalisation: {report_type}")
+            raise ValueError(f"Invalid report type: {report_type}")
 
         result["data"] = data
 
