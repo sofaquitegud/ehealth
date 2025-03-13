@@ -583,10 +583,10 @@ if __name__ == "__main__":
 
     # Generate report
     generated_report = analyzer.run_analysis(
-        report_type='Latest', # Latest | Trending
-        health_measure='Wellness', # Overall | BMI | Hypertension | Stress | Wellness
-        category='Age_range', # Age_range, Gender, BMI | Weekly, Monthly, Quarterly, Yearly
-        with_summary=False,  # Set to True if have an API key
+        report_type='Trending', # Latest | Trending
+        health_measure='BMI', # Overall | BMI | Hypertension | Stress | Wellness
+        category='Monthly', # Age_range, Gender, BMI | Weekly, Monthly, Quarterly, Yearly
+        with_summary=True,  # Set to True if have an API key
         enable_display=True # Set to True to display visualization
     )
 
