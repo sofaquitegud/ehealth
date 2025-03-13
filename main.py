@@ -28,6 +28,7 @@ def main():
         category="Monthly",  # For Latest: 'Overall', 'Age range', 'Gender type', 'BMI'
         # For Trending: 'Weekly', 'Monthly', 'Quarterly', 'Yearly'
         with_summary=False,
+        enable_display=False
     )
 
     print("\nGenerated Report:")
