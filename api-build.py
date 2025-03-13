@@ -1,4 +1,5 @@
 # Import libraries
+from fastapi.responses import JSONResponse
 from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from enum import Enum
@@ -6,6 +7,8 @@ from typing import Dict, Optional, Any
 from pydantic import BaseModel
 import pandas as pd
 import os
+
+from sqlalchemy import JSON
 
 # Import StaffHealthAnalyzer class
 from staff_health_analyzer import StaffHealthAnalyzer, HealthMeasure, VisualizationCategory, TimePeriod, ReportType
@@ -70,11 +73,11 @@ async def get_report_types():
 
 @app.get("/report", response_model=ReportResponse, tags=["Reports"])
 async def get_report(
-    report_type: str = Query(..., description="Type of report: Latest or Trending"),
-    health_measure: str = Query(..., description="Health measure to analyze"),
-    category: str = Query(..., description="Category or time period for the report"),
+    report_type: str = Query('Trending', description="Type of report: Latest or Trending"),
+    health_measure: str = Query('BMI', description="Health measure to analyze"),
+    category: str = Query('Weekly', description="Category or time period for the report"),
     with_summary: bool = Query(False, description="Whether to include a natural language summary"),
-    enable_display: bool = Query(True, description="Enable visualization display (works in direct script execution)"),
+    mode: str = Query('mobile', description="Application mode: mobile or kiosk"),
     analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
 ):
     """
@@ -86,20 +89,31 @@ async def get_report(
         - For Latest reports: Overall, Age range, Gender type, BMI
         - For Trending reports: Weekly, Monthly, Quarterly, Yearly
     - **with_summary**: Set to true to include AI-generated natural language summary
+    - **mode**: Set application mode 'mobile' (default) or 'kiosk' (BMI not supported)
     """
     try:
+        #Validate mode
+        if mode not in ['mobile', 'kiosk']:
+            return JSONResponse(content={"error": f"Invalid mode: {mode}. Allowed modes are 'mobile' or 'kiosk'"}, status_code=400)
+        
+        # Check for BMI report in kiosk mode
+        if mode == 'kiosk' and health_measure == 'BMI':
+            return JSONResponse(content={"error": "BMI reports are not supported in kiosk"}, status_code=400)
+        
         # Validate inputs
         if report_type not in [rt.value for rt in ReportType]:
-            raise HTTPException(status_code=400, detail=f"Invalid report type: {report_type}")
+            return JSONResponse(content={"error": f"Invalid report type: {report_type}"}, status_code=400)
         
         if health_measure not in [hm.value for hm in HealthMeasure]:
-            raise HTTPException(status_code=400, detail=f"Invalid health measure: {health_measure}")
+            return JSONResponse(content={"error": f"Invalid health measure: {health_measure}"}, status_code=400)
         
-        if report_type == 'Latest' and category not in [vc.value for vc in VisualizationCategory]:
-            raise HTTPException(status_code=400, detail=f"Invalid visualization category: {category}")
-        
-        if report_type =='Trending' and category not in [tp.value for tp in TimePeriod]:
-            raise HTTPException(status_code=400, detail=f"Invalid time period {category}")
+        # Validate category based on report_type
+        if report_type == 'Latest':
+            if category not in [vc.value for vc in VisualizationCategory]:
+                return JSONResponse(content={"error": f"Invalid visualization category: {category}"}, status_code=400)
+        elif report_type == 'Trending':
+            if category not in [tp.value for tp in TimePeriod]:
+                return JSONResponse(content={"error": f"Invalid time period: {category}"}, status_code=400)
         
         # Run analysis
         result = analyzer.run_analysis(
@@ -115,29 +129,25 @@ async def get_report(
         return result
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(content={"error": str(e)}, status_code=400)
     
 @app.get("/all-latest-reports", tags=["Batch Reports"])
 async def get_all_latest_reports(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
     """Generate all latest report combinations"""
     try:
         reports = analyzer.generate_all_latest_reports()
-
         return {key: report.to_dict(orient='records') for key, report in reports.items()}
-    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(content={"error": str(e)}, status_code=400)
     
 @app.get("/all-trending-reports", tags=["Batch Reports"])
 async def get_all_trending_reports(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
     """Generate all trending report combinations"""
     try:
         reports = analyzer.generate_all_trending_reports()
-
         return {key: report.to_dict(orient='records') for key, report in reports.items()}
-    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(content={"error": str(e)}, status_code=400)
     
 # Main entry point
 if __name__ == "__main__":
