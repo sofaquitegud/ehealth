@@ -74,6 +74,7 @@ async def get_report(
     health_measure: str = Query(..., description="Health measure to analyze"),
     category: str = Query(..., description="Category or time period for the report"),
     with_summary: bool = Query(False, description="Whether to include a natural language summary"),
+    enable_display: bool = Query(True, description="Enable visualization display (works in direct script execution)"),
     analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
 ):
     """
