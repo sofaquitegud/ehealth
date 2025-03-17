@@ -9,13 +9,7 @@ import pandas as pd
 import os
 
 # Import StaffHealthAnalyzer class
-from staff_health_analyzer import (
-    StaffHealthAnalyzer,
-    HealthMeasure,
-    VisualizationCategory,
-    TimePeriod,
-    ReportType,
-)
+from staff_health_analyzer import StaffHealthAnalyzer, HealthMeasure, VisualizationCategory, TimePeriod, ReportType
 
 # Create FastAPI app
 app = FastAPI()
@@ -66,7 +60,7 @@ async def root():
     """Root endpoint with API information"""
     return {
         "message": "Staff Health Analysis API is running",
-        "version": "1.0.0",
+        "version": "1.1.2",
         "docs": "/docs",
     }
 
@@ -156,7 +150,7 @@ async def get_report(
             if category not in [vc.value for vc in VisualizationCategory]:
                 return JSONResponse(
                     content={
-                        "error": f"Invalid visualization category: {category}. Expected 'Overall', 'Age range', 'Gender type' or 'BMI'."
+                        "error": f"Invalid visualization category: {category}. Expected 'Overall', 'Age_range', 'Gender type' or 'BMI'."
                     },
                     status_code=400,
                 )
@@ -197,7 +191,7 @@ async def get_all_latest_reports(
 ):
     """Generate all latest report combinations based on mode"""
     try:
-        reports = analyzer.generate_all_latest_reports()
+        reports = analyzer.generate_all_reports("Latest")
 
         # Filter out BMI reports in kiosk mode
         if mode == "kiosk":
@@ -217,7 +211,7 @@ async def get_all_trending_reports(
 ):
     """Generate all trending report combinations based on mode"""
     try:
-        reports = analyzer.generate_all_trending_reports()
+        reports = analyzer.generate_all_reports("Trending")
 
         # Filter out BMI reports in kiosk mode
         if mode == "kiosk":
