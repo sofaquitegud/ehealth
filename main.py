@@ -1,84 +1,59 @@
 # main.py
+
 import os
-from preprocessing import StaffHealthPreprocessor, HealthMeasure
-from analytics import StaffHealthAnalyzer, VisualizationCategory, TimePeriod, ReportType
+from analytics import StaffHealthAnalyzer
+from preprocessing import MODE_MOBILE, MODE_KIOSK
 
-
-def main():
-    # Initialize the preprocessor
-    preprocessor = StaffHealthPreprocessor(data_path="staff_health_data.csv")
-
-    # Get processed data and mappings
-    processed_data = preprocessor.get_processed_data()
-    measurement_mappings = preprocessor.get_measurement_mappings()
-    display_names = preprocessor.get_display_names()
-
-    # Initialize the analyzer with preprocessed data
-    analyzer = StaffHealthAnalyzer(
-        processed_data=processed_data,
-        measurement_mappings=measurement_mappings,
-        display_names=display_names,
-        api_key=os.getenv("OPENAI_API_KEY"),
+# Main execution section
+if __name__ == "__main__":
+    # For mobile data
+    mobile_analyzer = StaffHealthAnalyzer(
+        data_path="staff_health_data.csv",
+        mode=MODE_MOBILE,
+        api_key=os.environ.get("OPENAI_API_KEY"),
     )
 
-    # Example 1: Generate a single report
-    report = analyzer.run_analysis(
-        report_type="Trending",  # 'Latest' or 'Trending'
-        health_measure="Overall",  # 'Overall', 'BMI', 'Hypertension', 'Stress', 'Wellness'
-        category="Monthly",  # For Latest: 'Overall', 'Age range', 'Gender type', 'BMI'
-        # For Trending: 'Weekly', 'Monthly', 'Quarterly', 'Yearly'
-        with_summary=False,
-        enable_display=False
+    # For kiosk data
+    kiosk_analyzer = StaffHealthAnalyzer(
+        data_path="staff_health_data_kiosk.csv",
+        mode=MODE_KIOSK,
+        api_key=os.environ.get("OPENAI_API_KEY"),
     )
 
-    print("\nGenerated Report:")
-    print(report["data"])
+    # Generate report
+    generated_report = mobile_analyzer.run_analysis(
+        report_type="Trending",  # Latest | Trending
+        health_measure="BMI",  # Overall | BMI | Hypertension | Stress | Wellness
+        category="Monthly",  # Age_range, Gender, BMI, Overall | Weekly, Monthly, Quarterly, Yearly
+        with_summary=False,  # Set to True if have an API key
+        enable_display=True,  # Set to True to display visualization
+    )
 
-    if "summary" in report:
+    print("Generated Report:")
+    print(generated_report["data"])
+
+    # Print summary if available
+    if "summary" in generated_report:
         print("\nSummary:")
-        print(report["summary"])
+        print(generated_report["summary"])
 
-    # Example 2: Generate all latest reports
+    # Example of generating all reports
     """
-    print("\nGenerating all latest reports...")
-    health_measures = [measure.value for measure in HealthMeasure]
-    viz_categories = [category.value for category in VisualizationCategory]
-    
-    all_latest_reports = analyzer.generate_all_latest_reports(
-        health_measures=health_measures,
-        visualization_categories=viz_categories
-    )
-    
-    print(f"Generated {len(all_latest_reports)} latest reports")
-    
-    # Example 3: Generate all trending reports
-    print("\nGenerating all trending reports...")
-    time_periods = [period.value for period in TimePeriod]
-    
-    all_trending_reports = analyzer.generate_all_trending_reports(
-        health_measures=health_measures,
-        time_periods=time_periods
-    )
-    
-    print(f"Generated {len(all_trending_reports)} trending reports")
-    
-    # Example 4: Save reports to files
-    os.makedirs('reports/latest', exist_ok=True)
-    os.makedirs('reports/trending', exist_ok=True)
-    
+    # Generate and save all latest reports
+    print('Generating and saving latest reports...')
+    all_latest_reports = mobile_analyzer.generate_all_reports("Latest")
     for key, report in all_latest_reports.items():
+        os.makedirs("reports/latest", exist_ok=True)
         filename = f"reports/latest/{key}.csv"
         report.to_csv(filename, index=False)
         print(f"Saved {filename}")
-    
+
+    # Generate and save all trending reports
+    print('Generating and saving trending reports...')
+    all_trending_reports = mobile_analyzer.generate_all_reports("Trending")
     for key, report in all_trending_reports.items():
+        os.makedirs("reports/trending", exist_ok=True)
         filename = f"reports/trending/{key}.csv"
         report.to_csv(filename, index=False)
         print(f"Saved {filename}")
-    
-    print("\nAll reports have been saved successfully!")"
     """
-
-
-if __name__ == "__main__":
-    main()
