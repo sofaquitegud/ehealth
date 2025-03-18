@@ -7,9 +7,16 @@ from typing import Dict, Optional, Any
 from pydantic import BaseModel
 import pandas as pd
 import os
+import difflib
 
 # Import StaffHealthAnalyzer class
-from staff_health_analyzer import StaffHealthAnalyzer, HealthMeasure, VisualizationCategory, TimePeriod, ReportType
+from staff_health_analyzer import (
+    StaffHealthAnalyzer,
+    HealthMeasure,
+    VisualizationCategory,
+    TimePeriod,
+    ReportType,
+)
 
 # Create FastAPI app
 app = FastAPI()
@@ -23,6 +30,20 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
+# Valid modes
+VALID_MODES = ["mobile", "kiosk"]
+
+
+# Function to get closest match for incorrect mode
+def get_closest_match(input_mode):
+    if not input_mode:
+        return None
+    # Find the closest match using difflib
+    closest_match = difflib.get_close_matches(
+        input_mode.lower(), VALID_MODES, n=1, cutoff=0.6
+    )
+    return closest_match[0] if closest_match else None
+
 
 # Shared dependency to get the analyser instance
 def get_analyzer(
@@ -32,13 +53,13 @@ def get_analyzer(
     api_key = os.getenv("OPENAI_API_KEY", None)
 
     # Validate mode
-    if mode not in ["mobile", "kiosk"]:
-        return JSONResponse(
-            content={
-                "error": f"Invalid mode: {mode}. Allowed modes are 'mobile' or 'kiosk'"
-            },
-            status_code=400,
-        )
+    if mode not in VALID_MODES:
+        closest_match = get_closest_match(mode)
+        error_message = f"Invalid mode: {mode}. Allowed modes are 'mobile' or 'kiosk'"
+        if closest_match:
+            error_message += f". Did you mean '{closest_match}'?"
+
+        return JSONResponse(content={"error": error_message}, status_code=400)
 
     # Create and return analyser instance
     return StaffHealthAnalyzer(data_path=data_path, api_key=api_key, mode=mode)
@@ -60,7 +81,7 @@ async def root():
     """Root endpoint with API information"""
     return {
         "message": "Staff Health Analysis API is running",
-        "version": "1.1.2",
+        "version": "1.1.3",
         "docs": "/docs",
     }
 
@@ -70,6 +91,14 @@ async def get_health_measure(
     mode: str = Query("mobile", description="Application mode: 'mobile' or 'kiosk'")
 ):
     """Get all available health measures based on mode"""
+    if mode not in VALID_MODES:
+        closest_match = get_closest_match(mode)
+        error_message = f"Invalid mode: {mode}. Allowed modes are 'mobile' or 'kiosk'"
+        if closest_match:
+            error_message += f". Did you mean '{closest_match}'?"
+
+        return JSONResponse(content={"error": error_message}, status_code=400)
+
     measures = [measure.value for measure in HealthMeasure]
     # Remove BMI from available measures in kiosk mode
     if mode == "kiosk":
@@ -82,6 +111,14 @@ async def get_visualization_categories(
     mode: str = Query("mobile", description="Application mode: 'mobile' or 'kiosk'")
 ):
     """Get all available visualization categories for latest reports based on mode"""
+    if mode not in VALID_MODES:
+        closest_match = get_closest_match(mode)
+        error_message = f"Invalid mode: {mode}. Allowed modes are 'mobile' or 'kiosk'"
+        if closest_match:
+            error_message += f". Did you mean '{closest_match}'?"
+
+        return JSONResponse(content={"error": error_message}, status_code=400)
+
     categories = [category.value for category in VisualizationCategory]
     # Remove BMI from available categories in kiosk mode
     if mode == "kiosk":
@@ -150,7 +187,7 @@ async def get_report(
             if category not in [vc.value for vc in VisualizationCategory]:
                 return JSONResponse(
                     content={
-                        "error": f"Invalid visualization category: {category}. Expected 'Overall', 'Age_range', 'Gender type' or 'BMI'."
+                        "error": f"Invalid visualization category: {category}. Expected 'Overall', 'Age_range', 'Gender' or 'BMI'."
                     },
                     status_code=400,
                 )
@@ -162,6 +199,16 @@ async def get_report(
                     },
                     status_code=400,
                 )
+
+        if mode not in VALID_MODES:
+            closest_match = get_closest_match(mode)
+            error_message = (
+                f"Invalid mode: {mode}. Allowed modes are 'mobile' or 'kiosk'"
+            )
+            if closest_match:
+                error_message += f". Did you mean '{closest_match}'?"
+
+            return JSONResponse(content={"error": error_message}, status_code=400)
 
         # Run analysis
         result = analyzer.run_analysis(
