@@ -1,7 +1,15 @@
 # preprocessing.py
+
 import pandas as pd
 import numpy as np
 from enum import Enum
+from typing import Dict, Optional, Any
+
+# Constants
+DEFAULT_BMI_VALUE = 22.0
+MODE_KIOSK = "kiosk"
+MODE_MOBILE = "mobile"
+ERROR_BMI_KIOSK = "BMI analysis not available in kiosk mode."
 
 
 class HealthMeasure(Enum):
@@ -12,27 +20,150 @@ class HealthMeasure(Enum):
     BMI = "BMI"
 
 
-class StaffHealthPreprocessor:
-    def __init__(self, data_path: str):
+class VisualizationCategory(Enum):
+    OVERALL = "Overall"
+    AGE_RANGE = "Age_range"
+    GENDER = "Gender"
+    BMI = "BMI"
+
+
+class TimePeriod(Enum):
+    WEEKLY = "Weekly"
+    MONTHLY = "Monthly"
+    QUARTERLY = "Quarterly"
+    YEARLY = "Yearly"
+
+
+class ReportType(Enum):
+    LATEST = "Latest"
+    TRENDING = "Trending"
+
+
+class HealthDataPreprocessor:
+    # Mapping constants
+    STRESS_MAP = {"low": 1, "normal": 2, "mild": 3, "high": 4, "very high": 5}
+    WELLNESS_MAP = {"high": 1, "medium": 2.5, "low": 5}
+    HYPERTENSION_MAP = {"low": 1, "medium": 2.5, "high": 5}
+    BMI_MAP = {"normal": 1, "underweight": 2, "overweight": 3, "obese": 5}
+
+    # Age range boundaries
+    AGE_BINS = [0, 25, 35, 45, 55, 100]
+    AGE_LABELS = ["18-25", "26-35", "36-45", "46-55", "55+"]
+
+    def __init__(self, data_path: str, mode: str = MODE_MOBILE):
         """
         Initialize the health data preprocessor
 
         Parameters:
         data_path (str): Path to the CSV file with staff health data
+        mode (str): Analysis mode - 'kiosk' or 'mobile'
         """
-        # Load the dataset
-        self.df = pd.read_csv(data_path)
+        # Validate and store the mode
+        self.mode = mode.lower()
+        if self.mode not in [MODE_KIOSK, MODE_MOBILE]:
+            raise ValueError(
+                f"Invalid mode: {mode}. Must be '{MODE_KIOSK}' or '{MODE_MOBILE}'"
+            )
+
+        # Load and preprocess the dataset
+        self.df = self._load_and_preprocess_data(data_path)
+
+        # Initialize mappings
+        self._initialize_mappings()
+
+    def _load_and_preprocess_data(self, data_path: str) -> pd.DataFrame:
+        """Load and preprocess the dataset"""
+        # Load data
+        df = pd.read_csv(data_path)
 
         # Convert date column to datetime
-        self.df["date"] = pd.to_datetime(self.df["date"])
+        df["date"] = pd.to_datetime(df["date"])
 
-        # Define value mappings
-        self.stress_map = {"low": 1, "normal": 2, "mild": 3, "high": 4, "very high": 5}
-        self.wellness_map = {"high": 1, "medium": 2.5, "low": 5}
-        self.hypertension_map = {"low": 1, "medium": 2.5, "high": 5}
-        self.bmi_map = {"normal": 1, "underweight": 2, "overweight": 3, "obese": 5}
+        # Handle BMI based on mode
+        df = self._handle_bmi_data(df)
 
-        # Column name mappings
+        # Process categorical BMI
+        df["original_bmi"] = df["bmi"].apply(self._categorize_bmi).replace("", np.nan)
+
+        # Save original values for other health measures
+        df["original_stress"] = df["stressLevel"].fillna("").replace("", np.nan)
+        df["original_wellness"] = df["wellnessLevel"].fillna("").replace("", np.nan)
+        df["original_hypertension"] = (
+            df["hypertensionRisk"].fillna("").replace("", np.nan)
+        )
+
+        # Sort data by staff_id and date
+        df = df.sort_values(by=["staff_id", "date"])
+        df.reset_index(drop=True, inplace=True)
+
+        # Handle missing values
+        df = self._handle_missing_values(df)
+
+        # Process age ranges
+        df["age_range"] = pd.cut(
+            df["age"],
+            bins=self.AGE_BINS,
+            labels=self.AGE_LABELS,
+        )
+
+        # Apply numeric mappings and calculate overall health
+        df = self._apply_value_mappings(df)
+
+        return df
+
+    def _handle_bmi_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Handle BMI data based on mode"""
+        df_copy = df.copy()
+
+        if self.mode == MODE_KIOSK:
+            # For kiosk mode, BMI is not available
+            df_copy["bmi"] = DEFAULT_BMI_VALUE
+            if "bmi" in df.columns:
+                print(
+                    "Warning: BMI data present but in kiosk mode. Using placeholder values."
+                )
+        elif "bmi" not in df.columns:
+            # Handle missing BMI column in mobile mode
+            print("Warning: BMI data missing in mobile mode. Using estimated values.")
+            df_copy["bmi"] = DEFAULT_BMI_VALUE
+
+        return df_copy
+
+    @staticmethod
+    def _categorize_bmi(bmi):
+        """Categorize BMI value"""
+        if bmi is None or pd.isna(bmi):
+            return ""
+        elif bmi < 18.5:
+            return "underweight"
+        elif 18.5 <= bmi < 25:
+            return "normal"
+        elif 25 <= bmi < 30:
+            return "overweight"
+        else:
+            return "obese"
+
+    def _handle_missing_values(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Handle missing values in health metrics"""
+        df_copy = df.copy()
+
+        # Health measure columns to process
+        health_columns = [
+            "original_hypertension",
+            "original_stress",
+            "original_wellness",
+            "original_bmi",
+        ]
+
+        # Forward fill followed by backward fill
+        for col in health_columns:
+            df_copy[col] = df_copy[col].ffill().bfill()
+
+        return df_copy
+
+    def _initialize_mappings(self):
+        """Initialize all mappings used in the analysis"""
+        # Measurement column mappings
         self.measurement_mappings = {
             "Overall": "overallHealth",
             "Hypertension": "original_hypertension",
@@ -41,7 +172,7 @@ class StaffHealthPreprocessor:
             "BMI": "original_bmi",
         }
 
-        # Standardized display names
+        # Display names for reports
         self.display_names = {
             "Overall": "OverallHealth",
             "Hypertension": "HypertensionRisk",
@@ -50,143 +181,53 @@ class StaffHealthPreprocessor:
             "BMI": "BMI",
         }
 
-        # Process the data
-        self._categorize_bmi()
-        self._handle_missing_values()
-        self._process_age_ranges()
-        self.apply_mappings()
+        # Visualization category mappings
+        self.visualization_mappings = {
+            "Overall": "overall",
+            "Age_range": "age_range",
+            "Gender": "gender",
+            "BMI": "original_bmi",
+        }
 
-    def _categorize_bmi(self):
-        """Categorize BMI values into descriptive categories"""
-
-        def categorize_bmi(bmi):
-            if bmi is None or pd.isna(bmi):
-                return ""
-            elif bmi < 18.5:
-                return "underweight"
-            elif 18.5 <= bmi < 25:
-                return "normal"
-            elif 25 <= bmi < 30:
-                return "overweight"
-            else:
-                return "obese"
-
-        # Save original values before any mappings
-        try:
-            self.df["original_bmi"] = (
-                self.df["bmi"].apply(categorize_bmi).replace("", np.nan)
-            )
-        except:  # To manage missing BMI data specifically for kiosk usage
-            self.df["bmi"] = [22] * len(self.df)
-            self.df["original_bmi"] = (
-                self.df["bmi"].apply(categorize_bmi).replace("", np.nan)
-            )
-        self.df["original_stress"] = (
-            self.df["stressLevel"].fillna("").replace("", np.nan)
-        )
-        self.df["original_wellness"] = (
-            self.df["wellnessLevel"].fillna("").replace("", np.nan)
-        )
-        self.df["original_hypertension"] = (
-            self.df["hypertensionRisk"].fillna("").replace("", np.nan)
-        )
-
-        # Managing missing values: Staff ID and Date in sequential order
-        self.df = self.df.sort_values(by=["staff_id", "date"])
-        self.df.reset_index(drop=True, inplace=True)
-
-    def _handle_missing_values(self, method: int = 0):
-        """Handle missing values in the data
-
-        Parameters:
-        method (int): 0 for forward/backward fill, other values for fixed value fill
-        """
-        if method == 0:
-            # Forward fill: Fill missing values with the last known non-missing value
-            self.df["original_hypertension"] = self.df["original_hypertension"].ffill()
-            self.df["original_stress"] = self.df["original_stress"].ffill()
-            self.df["original_wellness"] = self.df["original_wellness"].ffill()
-            self.df["original_bmi"] = self.df["original_bmi"].ffill()
-
-            # Backward fill: Fill missing values with the next known non-missing value
-            self.df["original_hypertension"] = self.df["original_hypertension"].bfill()
-            self.df["original_stress"] = self.df["original_stress"].bfill()
-            self.df["original_wellness"] = self.df["original_wellness"].bfill()
-            self.df["original_bmi"] = self.df["original_bmi"].bfill()
-        else:
-            # Fixed Value fill: Fill Missing Values with a Fixed Value
-            self.df["original_hypertension"] = self.df["original_hypertension"].fillna(
-                "medium"
-            )
-            self.df["original_stress"] = self.df["original_stress"].fillna("normal")
-            self.df["original_wellness"] = self.df["original_wellness"].fillna("medium")
-            self.df["original_bmi"] = self.df["original_bmi"].fillna("normal")
-
-    def _process_age_ranges(self):
-        """Process age ranges with correct labels"""
-        self.df["age_range"] = pd.cut(
-            self.df["age"],
-            bins=[0, 25, 35, 45, 55, 100],
-            labels=["18-25", "26-35", "36-45", "46-55", "55+"],
-        )
-
-    def apply_mappings(self):
+    def _apply_value_mappings(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply numeric mappings to categorical data and calculate overall health"""
+        df_copy = df.copy()
 
-        # Determine Overall Health category
-        def overall_health_category(overall_health_value):
-            if overall_health_value <= 2:
-                return "healthy"
-            elif 2 < overall_health_value <= 3:
-                return "mild"
-            elif 3 < overall_health_value <= 4:
-                return "elevated"
-            else:
-                return "risky"
-
-        # Apply mappings
-        self.df["stressLevel"] = self.df["original_stress"].map(self.stress_map)
-        self.df["wellnessLevel"] = self.df["original_wellness"].map(self.wellness_map)
-        self.df["hypertensionRisk"] = self.df["original_hypertension"].map(
-            self.hypertension_map
+        # Apply numeric mappings
+        df_copy["stressLevel"] = df_copy["original_stress"].map(self.STRESS_MAP)
+        df_copy["wellnessLevel"] = df_copy["original_wellness"].map(self.WELLNESS_MAP)
+        df_copy["hypertensionRisk"] = df_copy["original_hypertension"].map(
+            self.HYPERTENSION_MAP
         )
-        self.df["bmi"] = self.df["original_bmi"].map(self.bmi_map)
+        df_copy["bmi"] = df_copy["original_bmi"].map(self.BMI_MAP)
 
         # Calculate overall health if not present
-        if "overallHealth" not in self.df.columns:
-            # Using the weighted formula for overall health
-            self.df["overallHealth"] = (
-                0.25 * self.df["stressLevel"]
-                + 0.35 * self.df["wellnessLevel"]
-                + 0.25 * self.df["hypertensionRisk"]
-                + 0.15 * self.df["bmi"]
-            )
-            self.df["overallHealth"] = self.df["overallHealth"].apply(
-                overall_health_category
+        if "overallHealth" not in df_copy.columns:
+            overall_health_values = (
+                0.25 * df_copy["stressLevel"]
+                + 0.35 * df_copy["wellnessLevel"]
+                + 0.25 * df_copy["hypertensionRisk"]
+                + 0.15 * df_copy["bmi"]
             )
 
+            df_copy["overallHealth"] = overall_health_values.apply(
+                self._categorize_overall_health
+            )
+
+        return df_copy
+
+    @staticmethod
+    def _categorize_overall_health(value: float) -> str:
+        """Categorize overall health value"""
+        if value <= 2:
+            return "healthy"
+        elif 2 < value <= 3:
+            return "mild"
+        elif 3 < value <= 4:
+            return "elevated"
+        else:
+            return "risky"
+
+    def get_processed_data(self) -> pd.DataFrame:
+        """Return the processed dataframe"""
         return self.df
-
-    def get_processed_data(self):
-        """Return the fully processed dataframe
-
-        Returns:
-        pd.DataFrame: Processed health data
-        """
-        return self.df
-
-    def get_measurement_mappings(self):
-        """Return the measurement mappings
-
-        Returns:
-        dict: Mapping between health measures and dataframe columns
-        """
-        return self.measurement_mappings
-
-    def get_display_names(self):
-        """Return the display names for health measures
-
-        Returns:
-        dict: Mapping between health measures and display names
-        """
-        return self.display_names
