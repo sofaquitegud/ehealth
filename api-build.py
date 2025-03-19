@@ -49,9 +49,6 @@ def get_closest_match(input_mode):
 def get_analyzer(
     mode: str = Query("mobile", description="Application mode: 'mobile' or 'kiosk'")
 ):
-    data_path = os.getenv("HEALTH_DATA_PATH", "staff_health_data.csv")
-    api_key = os.getenv("OPENAI_API_KEY", None)
-
     # Validate mode
     if mode not in VALID_MODES:
         closest_match = get_closest_match(mode)
@@ -60,6 +57,14 @@ def get_analyzer(
             error_message += f". Did you mean '{closest_match}'?"
 
         return JSONResponse(content={"error": error_message}, status_code=400)
+    
+    # Choose data path based on mode
+    if mode  == 'mobile':
+        data_path = os.getenv("HEALTH_DATA_PATH", "staff_health_data.csv")
+    else: # mode == 'kiosk'
+        data_path = os.getenv("HEALTH_DATA_KIOSK_PATH", "staff_health_data_kiosk.csv")
+    
+    api_key = os.getenv("OPENAI_API_KEY", None)
 
     # Create and return analyser instance
     return StaffHealthAnalyzer(data_path=data_path, api_key=api_key, mode=mode)
@@ -159,7 +164,7 @@ async def get_report(
     - **report_type**: 'Latest' for current snapshot or 'Trending' for time-based analysis
     - **health_measure**: The health metric to analyze (Overall, Hypertension, BMI, Stress, Wellness)
     - **category**:
-        - For Latest reports: Overall, Age range, Gender type, BMI
+        - For Latest reports: Overall, Age_range, Gender, BMI
         - For Trending reports: Weekly, Monthly, Quarterly, Yearly
     - **with_summary**: Set to true to include AI-generated natural language summary
     - **mode**: Set application mode 'mobile' (default) or 'kiosk' (BMI not supported)
@@ -200,6 +205,7 @@ async def get_report(
                     status_code=400,
                 )
 
+        # Validate mode
         if mode not in VALID_MODES:
             closest_match = get_closest_match(mode)
             error_message = (
