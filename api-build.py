@@ -1,6 +1,6 @@
 # Import libraries
 from fastapi.responses import JSONResponse
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from enum import Enum
 from typing import Dict, Optional, Any
@@ -21,7 +21,7 @@ from staff_health_analyzer import (
 # Create FastAPI app
 app = FastAPI()
 
-# Add CORS middlewareto allow cross-origin requests
+# Add CORS middleware to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allows all origins
