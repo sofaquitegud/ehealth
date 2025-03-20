@@ -4,7 +4,6 @@ from fastapi import FastAPI, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from pydantic import BaseModel
-import pandas as pd
 import os
 import difflib
 
@@ -65,8 +64,21 @@ def get_analyzer(
 
     api_key = os.getenv("OPENAI_API_KEY", None)
 
+    # Get database config from environment variables
+    db_config = None
+    if all(os.getenv(key) for key in ["DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"]):
+        db_config = {
+            "host": os.getenv("DB_HOST"),
+            "port": os.getenv("DB_PORT"),
+            "dbname": os.getenv("DB_NAME"),
+            "user": os.getenv("DB_USER"),
+            "password": os.getenv("DB_PASSWORD"),
+        }
+
     # Create and return analyser instance
-    return StaffHealthAnalyzer(data_path=data_path, api_key=api_key, mode=mode)
+    return StaffHealthAnalyzer(
+        data_path=data_path, api_key=api_key, mode=mode, db_config=db_config
+    )
 
 
 # Response models
