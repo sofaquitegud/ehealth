@@ -20,7 +20,7 @@ from staff_health_analyzer import (
 # Create FastAPI app
 app = FastAPI()
 
-# Add CORS middlewareto allow cross-origin requests
+# Add CORS middleware to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allows all origins
