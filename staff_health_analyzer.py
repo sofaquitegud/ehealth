@@ -1,10 +1,11 @@
 # Import Libraries
 import pandas as pd
-from typing import Dict, Optional, Union, List, Any
-from enum import Enum
-import os
 import matplotlib.pyplot as plt
 import numpy as np
+import os
+import psycopg2
+from enum import Enum
+from typing import Dict, Optional, Any
 from functools import lru_cache
 
 # Constants
@@ -53,7 +54,11 @@ class StaffHealthAnalyzer:
     AGE_LABELS = ["18-25", "26-35", "36-45", "46-55", "55+"]
 
     def __init__(
-        self, data_path: str, api_key: Optional[str] = None, mode: str = MODE_MOBILE
+        self,
+        data_path: str,
+        api_key: Optional[str] = None,
+        mode: str = MODE_MOBILE,
+        db_config: Optional[Dict[str, str]] = None
     ):
         """
         Initialize the health analyzer with staff health data
@@ -62,11 +67,15 @@ class StaffHealthAnalyzer:
         data_path (str): Path to the CSV file with staff health data
         api_key (str, optional): OpenAI API key for natural language summaries
         mode (str): Analysis mode - 'kiosk' or 'mobile'
+        db_config (dict, optional): Database configuration for PostgreSQL connection
         """
         # Validate and store the mode
         self.mode = mode.lower()
         if self.mode not in [MODE_KIOSK, MODE_MOBILE]:
             raise ValueError(f"Invalid mode: {mode}. Must be '{MODE_KIOSK}' or '{MODE_MOBILE}'")
+        
+        # Store database configuration
+        self.db_config = db_config
 
         # Load and preprocess the dataset
         self.df = self._load_and_preprocess_data(data_path)
@@ -80,7 +89,32 @@ class StaffHealthAnalyzer:
     def _load_and_preprocess_data(self, data_path: str) -> pd.DataFrame:
         """Load and preprocess the dataset"""
         # Load data
-        df = pd.read_csv(data_path)
+        try:
+            df = pd.read_csv(data_path)
+        except Exception as e:
+            print(f"Failed to load CSV data: {e}")
+            if self.db_config:
+                try:
+                    conn = psycopg2.connect(**self.db_config)
+
+                    if self.mode == MODE_MOBILE:
+                        query = """
+                            SELECT date, staff_id, gender, age, bmi, stressLevel, wellnessLevel, hypertensionRisk
+                            FROM mobile_table
+                            """
+                    else:
+                        query = """
+                            SELECT date, staff_id, gender, age, stressLevel, wellnessLevel, hypertensionRisk
+                            FROM kiosk_table
+                        """
+
+                    df = pd.read_sql_query(query, conn)
+                    conn.close()
+                    print(f"Successfully loaded data from database in {self.mode} mode")
+                except Exception as db_error:
+                    raise ValueError(f"Failed to load data from both CSV and database: {db_error}")
+            else:
+                raise ValueError('Database configuration not provided and CSV file not found')
         
         # Convert date column to datetime
         df["date"] = pd.to_datetime(df["date"])
@@ -691,11 +725,20 @@ class StaffHealthAnalyzer:
 
 # Main execution section
 if __name__ == "__main__":
+    db_config = {
+        'host': 'localhost',
+        'port': '5432',
+        'dbname': 'your_db',
+        'user': 'your_user',
+        'password': 'your_password'
+    }
+
     # For mobile data
     mobile_analyzer = StaffHealthAnalyzer(
         data_path="staff_health_data.csv",
         mode="mobile",
         api_key=os.environ.get("OPENAI_API_KEY"),
+        db_config=db_config
     )
 
     # For kiosk data
@@ -703,6 +746,7 @@ if __name__ == "__main__":
         data_path="staff_health_data_kiosk.csv",
         mode="kiosk",
         api_key=os.environ.get("OPENAI_API_KEY"),
+        db_config=db_config
     )
 
     # Generate report
