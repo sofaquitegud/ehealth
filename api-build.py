@@ -1,9 +1,8 @@
 # Import libraries
 from fastapi.responses import JSONResponse
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from enum import Enum
-from typing import Dict, Optional, Any
+from typing import Optional
 from pydantic import BaseModel
 import pandas as pd
 import os
@@ -57,13 +56,13 @@ def get_analyzer(
             error_message += f". Did you mean '{closest_match}'?"
 
         return JSONResponse(content={"error": error_message}, status_code=400)
-    
+
     # Choose data path based on mode
-    if mode  == 'mobile':
+    if mode == "mobile":
         data_path = os.getenv("HEALTH_DATA_PATH", "staff_health_data.csv")
-    else: # mode == 'kiosk'
+    else:  # mode == 'kiosk'
         data_path = os.getenv("HEALTH_DATA_KIOSK_PATH", "staff_health_data_kiosk.csv")
-    
+
     api_key = os.getenv("OPENAI_API_KEY", None)
 
     # Create and return analyser instance
