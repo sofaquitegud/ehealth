@@ -1,4 +1,5 @@
 # Import Libraries
+import configparser
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,6 +8,7 @@ import psycopg2
 from enum import Enum
 from typing import Dict, Optional, Any
 from functools import lru_cache
+
 
 # Constants
 DEFAULT_BMI_VALUE = 22.0
@@ -48,7 +50,7 @@ class StaffHealthAnalyzer:
     WELLNESS_MAP = {"high": 1, "medium": 2.5, "low": 5}
     HYPERTENSION_MAP = {"low": 1, "medium": 2.5, "high": 5}
     BMI_MAP = {"normal": 1, "underweight": 2, "overweight": 3, "obese": 5}
-    
+
     # Age range boundaries
     AGE_BINS = [0, 25, 35, 45, 55, 100]
     AGE_LABELS = ["18-25", "26-35", "36-45", "46-55", "55+"]
@@ -58,7 +60,7 @@ class StaffHealthAnalyzer:
         data_path: str,
         api_key: Optional[str] = None,
         mode: str = MODE_MOBILE,
-        db_config: Optional[Dict[str, str]] = None
+        db_config: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the health analyzer with staff health data
@@ -72,17 +74,19 @@ class StaffHealthAnalyzer:
         # Validate and store the mode
         self.mode = mode.lower()
         if self.mode not in [MODE_KIOSK, MODE_MOBILE]:
-            raise ValueError(f"Invalid mode: {mode}. Must be '{MODE_KIOSK}' or '{MODE_MOBILE}'")
-        
+            raise ValueError(
+                f"Invalid mode: {mode}. Must be '{MODE_KIOSK}' or '{MODE_MOBILE}'"
+            )
+
         # Store database configuration
         self.db_config = db_config
 
         # Load and preprocess the dataset
         self.df = self._load_and_preprocess_data(data_path)
-        
+
         # Initialize mappings
         self._initialize_mappings()
-        
+
         # Initialize LLM if API key is provided
         self.llm = self._initialize_llm(api_key)
 
@@ -99,12 +103,12 @@ class StaffHealthAnalyzer:
 
                     if self.mode == MODE_MOBILE:
                         query = """
-                            SELECT date, staff_id, gender, age, bmi, stressLevel, wellnessLevel, hypertensionRisk
+                            SELECT created_at AS date, username AS staff_id, gender, age, bmi, stressLevel, wellnessLevel, hypertensionRisk
                             FROM mobile_table
                             """
                     else:
                         query = """
-                            SELECT date, staff_id, gender, age, stressLevel, wellnessLevel, hypertensionRisk
+                            SELECT created_at AS date, email AS staff_id, stressLevel, wellnessLevel, hypertensionRisk
                             FROM kiosk_table
                         """
 
@@ -112,57 +116,89 @@ class StaffHealthAnalyzer:
                     conn.close()
                     print(f"Successfully loaded data from database in {self.mode} mode")
                 except Exception as db_error:
-                    raise ValueError(f"Failed to load data from both CSV and database: {db_error}")
+                    raise ValueError(
+                        f"Failed to load data from both CSV and database: {db_error}"
+                    )
             else:
-                raise ValueError('Database configuration not provided and CSV file not found')
-        
+                raise ValueError(
+                    "Database configuration not provided and CSV file not found"
+                )
+
         # Convert date column to datetime
         df["date"] = pd.to_datetime(df["date"])
-        
+
+        # Handle demographic data based on mode
+        df = self._handle_demographic_data(df)
+
         # Handle BMI based on mode
         df = self._handle_bmi_data(df)
-        
+
         # Process categorical BMI
         df["original_bmi"] = df["bmi"].apply(self._categorize_bmi).replace("", np.nan)
-        
+
         # Save original values for other health measures
         df["original_stress"] = df["stressLevel"].fillna("").replace("", np.nan)
         df["original_wellness"] = df["wellnessLevel"].fillna("").replace("", np.nan)
-        df["original_hypertension"] = df["hypertensionRisk"].fillna("").replace("", np.nan)
-        
+        df["original_hypertension"] = (
+            df["hypertensionRisk"].fillna("").replace("", np.nan)
+        )
+
         # Sort data by staff_id and date
         df = df.sort_values(by=["staff_id", "date"])
         df.reset_index(drop=True, inplace=True)
-        
+
         # Handle missing values
         df = self._handle_missing_values(df)
-        
+
         # Process age ranges
         df["age_range"] = pd.cut(
             df["age"],
             bins=self.AGE_BINS,
             labels=self.AGE_LABELS,
         )
-        
+
         # Apply numeric mappings and calculate overall health
         df = self._apply_value_mappings(df)
-        
+
         return df
+
+    def _handle_demographic_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Handle demographic data (age and gender) based on mode"""
+        df_copy = df.copy()
+
+        if self.mode == MODE_KIOSK:
+            if "age" not in df_copy.columns:
+                df_copy["age"] = 35  # Default value
+            if "gender" not in df_copy.columns:
+                df_copy["gender"] = "unknown"
+        elif self.mode == MODE_MOBILE:
+            if "age" not in df_copy.columns:
+                print("Warning: Age data missing in mobile mode. Using default values.")
+                df_copy["age"] = 35
+            if "gender" not in df_copy.columns:
+                print(
+                    "Warning: Gender data missing in mobile mode. Using default values."
+                )
+                df_copy["gender"] = "unknown"
+
+        return df_copy
 
     def _handle_bmi_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Handle BMI data based on mode"""
         df_copy = df.copy()
-        
+
         if self.mode == MODE_KIOSK:
             # For kiosk mode, BMI is not available
             df_copy["bmi"] = DEFAULT_BMI_VALUE
             if "bmi" in df.columns:
-                print("Warning: BMI data present but in kiosk mode. Using placeholder values.")
+                print(
+                    "Warning: BMI data present but in kiosk mode. Using placeholder values."
+                )
         elif "bmi" not in df.columns:
             # Handle missing BMI column in mobile mode
             print("Warning: BMI data missing in mobile mode. Using estimated values.")
             df_copy["bmi"] = DEFAULT_BMI_VALUE
-            
+
         return df_copy
 
     @staticmethod
@@ -182,14 +218,19 @@ class StaffHealthAnalyzer:
     def _handle_missing_values(self, df: pd.DataFrame) -> pd.DataFrame:
         """Handle missing values in health metrics"""
         df_copy = df.copy()
-        
+
         # Health measure columns to process
-        health_columns = ["original_hypertension", "original_stress", "original_wellness", "original_bmi"]
-        
+        health_columns = [
+            "original_hypertension",
+            "original_stress",
+            "original_wellness",
+            "original_bmi",
+        ]
+
         # Forward fill followed by backward fill
         for col in health_columns:
             df_copy[col] = df_copy[col].ffill().bfill()
-            
+
         return df_copy
 
     def _initialize_mappings(self):
@@ -257,13 +298,15 @@ class StaffHealthAnalyzer:
     def _apply_value_mappings(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply numeric mappings to categorical data and calculate overall health"""
         df_copy = df.copy()
-        
+
         # Apply numeric mappings
         df_copy["stressLevel"] = df_copy["original_stress"].map(self.STRESS_MAP)
         df_copy["wellnessLevel"] = df_copy["original_wellness"].map(self.WELLNESS_MAP)
-        df_copy["hypertensionRisk"] = df_copy["original_hypertension"].map(self.HYPERTENSION_MAP)
+        df_copy["hypertensionRisk"] = df_copy["original_hypertension"].map(
+            self.HYPERTENSION_MAP
+        )
         df_copy["bmi"] = df_copy["original_bmi"].map(self.BMI_MAP)
-        
+
         # Calculate overall health if not present
         if "overallHealth" not in df_copy.columns:
             overall_health_values = (
@@ -272,9 +315,11 @@ class StaffHealthAnalyzer:
                 + 0.25 * df_copy["hypertensionRisk"]
                 + 0.15 * df_copy["bmi"]
             )
-            
-            df_copy["overallHealth"] = overall_health_values.apply(self._categorize_overall_health)
-            
+
+            df_copy["overallHealth"] = overall_health_values.apply(
+                self._categorize_overall_health
+            )
+
         return df_copy
 
     @staticmethod
@@ -293,9 +338,10 @@ class StaffHealthAnalyzer:
         """Initialize LLM if API key is provided"""
         if not api_key:
             return None
-            
+
         try:
             from langchain_openai import ChatOpenAI
+
             os.environ["OPENAI_API_KEY"] = api_key
             return ChatOpenAI(model="gpt-4o")
         except ImportError:
@@ -307,6 +353,9 @@ class StaffHealthAnalyzer:
         if self.mode == MODE_KIOSK:
             if health_measure == "BMI" or category == "BMI":
                 raise ValueError(ERROR_BMI_KIOSK)
+            # Add validation for demographic analysis in kiosk mode
+            if category in ["Age_range", "Gender"]:
+                raise ValueError(f"{category} analysis not available in kiosk mode.")
 
     @lru_cache(maxsize=32)
     def get_latest_data(self) -> pd.DataFrame:
@@ -340,29 +389,46 @@ class StaffHealthAnalyzer:
         viz_col = self.visualization_mappings[visualization_cat]
 
         # Set the appropriate category name
-        category_name = "Category" if visualization_cat == "Overall" else visualization_cat
+        category_name = (
+            "Category" if visualization_cat == "Overall" else visualization_cat
+        )
 
         # Generate report based on visualization category
         if viz_col == "overall":
-            return self._generate_overall_report(data, measure_col, display_name, category_name)
+            return self._generate_overall_report(
+                data, measure_col, display_name, category_name
+            )
         else:
-            return self._generate_category_report(data, measure_col, viz_col, display_name, category_name)
+            return self._generate_category_report(
+                data, measure_col, viz_col, display_name, category_name
+            )
 
     def _generate_overall_report(
-        self, data: pd.DataFrame, measure_col: str, display_name: str, category_name: str
+        self,
+        data: pd.DataFrame,
+        measure_col: str,
+        display_name: str,
+        category_name: str,
     ) -> pd.DataFrame:
         """Generate report for Overall visualization category"""
         counts = data[measure_col].value_counts()
-        
-        return pd.DataFrame({
-            category_name: "Overall",
-            display_name: counts.index.tolist(),
-            "Count": counts.values,
-            "Percentage": (counts.values / counts.sum() * 100).round(2),
-        })
+
+        return pd.DataFrame(
+            {
+                category_name: "Overall",
+                display_name: counts.index.tolist(),
+                "Count": counts.values,
+                "Percentage": (counts.values / counts.sum() * 100).round(2),
+            }
+        )
 
     def _generate_category_report(
-        self, data: pd.DataFrame, measure_col: str, viz_col: str, display_name: str, category_name: str
+        self,
+        data: pd.DataFrame,
+        measure_col: str,
+        viz_col: str,
+        display_name: str,
+        category_name: str,
     ) -> pd.DataFrame:
         """Generate report for a specific visualization category"""
         # Create crosstab
@@ -373,13 +439,15 @@ class StaffHealthAnalyzer:
         report = []
         for measure_val in crosstab.index:
             for group_val in crosstab.columns:
-                report.append({
-                    category_name: group_val,
-                    display_name: measure_val,
-                    "Count": crosstab.loc[measure_val, group_val],
-                    "Percentage": percentages.loc[measure_val, group_val].round(2),
-                })
-                
+                report.append(
+                    {
+                        category_name: group_val,
+                        display_name: measure_val,
+                        "Count": crosstab.loc[measure_val, group_val],
+                        "Percentage": percentages.loc[measure_val, group_val].round(2),
+                    }
+                )
+
         return pd.DataFrame(report)
 
     def generate_trending_report(
@@ -404,153 +472,175 @@ class StaffHealthAnalyzer:
 
         # Create filtered dataframe with time period column
         df_filtered = self._filter_by_time_period(time_period)
-        
+
         # Process the data to generate the trending report
         return self._process_trending_data(df_filtered, measure_col, display_name)
 
     def _filter_by_time_period(self, time_period: str) -> pd.DataFrame:
         """Filter data and add time_period column based on selected time period"""
         df = self.df.copy()
-        
+
         if time_period == "Weekly":
             # Filter data for the last 6 weeks
-            df = df[df["date"] >= df["date"].max() - pd.Timedelta(weeks=5)].reset_index(drop=True)
+            df = df[df["date"] >= df["date"].max() - pd.Timedelta(weeks=5)].reset_index(
+                drop=True
+            )
             df["time_period"] = df["date"].dt.to_period("W")
             groupby_col = "time_period"
 
         elif time_period == "Monthly":
             # Filter data for the last 6 months
-            df = df[df["date"] >= df["date"].max() - pd.DateOffset(months=5)].reset_index(drop=True)
+            df = df[
+                df["date"] >= df["date"].max() - pd.DateOffset(months=5)
+            ].reset_index(drop=True)
             df["time_period"] = df["date"].dt.to_period("M")
             groupby_col = "time_period"
 
         elif time_period == "Quarterly":
             # Filter data for the last 6 quarters
-            df = df[df["date"] >= df["date"].max() - pd.DateOffset(months=6 * 3 - 2)].reset_index(drop=True)
-            df["time_period"] = df["date"].dt.to_period("Q").apply(lambda x: x.start_time.strftime("%Y-%m-%d"))
+            df = df[
+                df["date"] >= df["date"].max() - pd.DateOffset(months=6 * 3 - 2)
+            ].reset_index(drop=True)
+            df["time_period"] = (
+                df["date"]
+                .dt.to_period("Q")
+                .apply(lambda x: x.start_time.strftime("%Y-%m-%d"))
+            )
             groupby_col = "time_period"
 
         elif time_period == "Yearly":
             # Filter data for the last 6 years
-            df = df[df["date"] >= df["date"].max() - pd.DateOffset(years=5)].reset_index(drop=True)
+            df = df[
+                df["date"] >= df["date"].max() - pd.DateOffset(years=5)
+            ].reset_index(drop=True)
             df["time_period"] = df["date"].dt.year
             groupby_col = "time_period"
         else:
             raise ValueError(f"Invalid time period: {time_period}")
-            
+
         return df, groupby_col
 
-    def _process_trending_data(self, filtered_data: tuple, measure_col: str, display_name: str) -> pd.DataFrame:
+    def _process_trending_data(
+        self, filtered_data: tuple, measure_col: str, display_name: str
+    ) -> pd.DataFrame:
         """Process filtered data to generate trending report"""
         df, groupby_col = filtered_data
-        
+
         # Get the latest date in each time period
         latest_dates = df.groupby(groupby_col)["date"].max().reset_index()
-        
+
         # Merge with the original dataset to keep only the latest records per time period
         df_latest = df.merge(latest_dates, on=[groupby_col, "date"])
-        
+
         # Define all possible categories for measure
         all_measure_categories = df[measure_col].unique()
         all_periods = df_latest[groupby_col].unique()
-        
+
         # Create a complete MultiIndex with all combinations
         multi_index = pd.MultiIndex.from_product(
             [all_periods, all_measure_categories], names=[groupby_col, measure_col]
         )
-        
+
         # Group by measure and time period, then count occurrences
-        df_trend = df_latest.groupby([groupby_col, measure_col]).size().reset_index(name="Count")
-        
+        df_trend = (
+            df_latest.groupby([groupby_col, measure_col])
+            .size()
+            .reset_index(name="Count")
+        )
+
         # Reindex to ensure missing categories are filled with zero
         df_trend = (
             df_trend.set_index([groupby_col, measure_col])
             .reindex(multi_index, fill_value=0)
             .reset_index()
         )
-        
+
         # Calculate percentage within each time period
         total_count = df_trend.groupby(groupby_col)["Count"].transform("sum")
         df_trend["Percentage"] = ((df_trend["Count"] / total_count) * 100).round(2)
-        
+
         # Convert time_period to string for consistent output
         df_trend[groupby_col] = df_trend[groupby_col].astype(str)
-        
+
         # Sort by time period for better visualization
         df_trend = df_trend.sort_values(by=[groupby_col, measure_col])
-        
+
         # Rename the measure_col column to use the display name for consistency with latest report
         return df_trend.rename(columns={measure_col: display_name})
 
     def generate_all_reports(self, report_type: str) -> Dict[str, pd.DataFrame]:
         """
         Generate all required reports of a specific type
-        
+
         Parameters:
         report_type (str): 'Latest' or 'Trending'
-        
+
         Returns:
         Dict[str, pd.DataFrame]: Dictionary of all reports with appropriate keys
         """
         reports = {}
         required_combinations = []
-        
+
         if report_type == "Latest":
             # Generate combinations for latest reports
             for measure in HealthMeasure:
                 # Skip BMI measure in kiosk mode
                 if self.mode == MODE_KIOSK and measure.value == "BMI":
                     continue
-                    
+
                 for category in VisualizationCategory:
                     # Skip BMI category in kiosk mode
                     if self.mode == MODE_KIOSK and category.value == "BMI":
                         continue
-                        
+
                     # Exclude BMI|BMI which is not in the requirements
                     if not (measure.value == "BMI" and category.value == "BMI"):
                         required_combinations.append((measure.value, category.value))
-                        
+
             # Generate each report
             for measure, category in required_combinations:
                 key = f"{measure}_{category}".lower().replace(" ", "_")
                 try:
-                    reports[key] = self.generate_latest_report(health_measure=measure, visualization_cat=category)
+                    reports[key] = self.generate_latest_report(
+                        health_measure=measure, visualization_cat=category
+                    )
                 except ValueError as e:
                     print(f"Skipping {key}: {str(e)}")
-                    
+
         elif report_type == "Trending":
             # Generate combinations for trending reports
             for measure in HealthMeasure:
                 # Skip BMI measure in kiosk mode
                 if self.mode == MODE_KIOSK and measure.value == "BMI":
                     continue
-                    
+
                 for period in TimePeriod:
                     required_combinations.append((measure.value, period.value))
-                    
+
             # Generate each report
             for measure, period in required_combinations:
                 key = f"{measure}_{period}".lower().replace(" ", "_")
                 try:
-                    reports[key] = self.generate_trending_report(health_measure=measure, time_period=period)
+                    reports[key] = self.generate_trending_report(
+                        health_measure=measure, time_period=period
+                    )
                 except ValueError as e:
                     print(f"Skipping {key}: {str(e)}")
         else:
             raise ValueError(f"Invalid report type: {report_type}")
-            
+
         return reports
 
     def format_table(self, df: pd.DataFrame) -> str:
         """Convert DataFrame to formatted markdown-style table with percentage formatting"""
         if df.empty:
             return "No data available."
-            
+
         # Format percentages if column exists
         if "Percentage" in df.columns:
             df = df.copy()
             df["Percentage"] = df["Percentage"].apply(lambda x: f"{x:.2f}%")
-            
+
         return df.to_markdown(index=False)
 
     def get_report_summary(
@@ -569,17 +659,19 @@ class StaffHealthAnalyzer:
         str: Natural language summary or message if LLM not available
         """
         if not self.llm:
-            return "LLM not available. Set API key to enable natural language summaries."
+            return (
+                "LLM not available. Set API key to enable natural language summaries."
+            )
 
         formatted_table = self.format_table(data)
-        
+
         formatted_prompt = self.system_prompt.format(
             report_type=report_type,
             health_measurement=health_measure,
             visualization_category=category,
             data=formatted_table,
         )
-        
+
         try:
             return self.llm.invoke(formatted_prompt).content
         except Exception as e:
@@ -608,14 +700,14 @@ class StaffHealthAnalyzer:
         """
         # Validate request
         self._validate_request(health_measure, category)
-        
+
         result = {
             "report_type": report_type,
             "health_measure": health_measure,
             "category": category,
             "mode": self.mode,
         }
-        
+
         # Generate appropriate report
         if report_type == "Latest":
             data = self.generate_latest_report(health_measure, category)
@@ -623,53 +715,65 @@ class StaffHealthAnalyzer:
             data = self.generate_trending_report(health_measure, category)
         else:
             raise ValueError(f"Invalid report type: {report_type}")
-            
+
         result["data"] = data
-        
+
         # Add summary if requested and available
         if with_summary:
-            result["summary"] = self.get_report_summary(report_type, health_measure, category, data)
-            
+            result["summary"] = self.get_report_summary(
+                report_type, health_measure, category, data
+            )
+
         # Display visualization if requested
         if enable_display:
             self._display_visualization(result)
-            
+
         return result
 
     def _display_visualization(self, result: Dict):
         """Display visualization based on report type"""
         report_type = result["report_type"]
         df_plot = result["data"]
-        
+
         # Check if dataframe is not empty
         if df_plot.empty:
             print("No data to visualize.")
             return
-            
+
         # Get column names
         time_column = df_plot.columns[0]  # First column (category or time period)
         category_column = df_plot.columns[1]  # Health measure category
-        
+
         plt.figure(figsize=(12, 6))
-        
+
         # Get unique categories
         unique_categories = df_plot[category_column].unique()
-        
+
         # Define color palette
         colors = plt.get_cmap("tab10", len(unique_categories))
-        
+
         # Choose visualization type based on report type
         if report_type == "Trending":
-            self._create_trending_visualization(df_plot, time_column, category_column, unique_categories, colors)
+            self._create_trending_visualization(
+                df_plot, time_column, category_column, unique_categories, colors
+            )
         else:  # Latest
-            self._create_latest_visualization(df_plot, time_column, category_column, unique_categories, colors)
-            
+            self._create_latest_visualization(
+                df_plot, time_column, category_column, unique_categories, colors
+            )
+
         # Show plot
         plt.tight_layout()
         plt.show()
-        
-    def _create_trending_visualization(self, df: pd.DataFrame, time_column: str, category_column: str, 
-                                      unique_categories: np.ndarray, colors):
+
+    def _create_trending_visualization(
+        self,
+        df: pd.DataFrame,
+        time_column: str,
+        category_column: str,
+        unique_categories: np.ndarray,
+        colors,
+    ):
         """Create visualization for trending reports"""
         # Plot each category separately
         for idx, category in enumerate(unique_categories):
@@ -682,7 +786,7 @@ class StaffHealthAnalyzer:
                 label=f"{category}",
                 color=colors(idx),
             )
-        
+
         # Formatting
         plt.xlabel(time_column, fontsize=12)
         plt.ylabel("Percentage (%)", fontsize=12)
@@ -690,18 +794,24 @@ class StaffHealthAnalyzer:
         plt.xticks(rotation=45)
         plt.grid(True, linestyle="--", alpha=0.6)
         plt.legend(loc="upper right")
-        
-    def _create_latest_visualization(self, df: pd.DataFrame, category_column: str, measure_column: str,
-                                    unique_categories: np.ndarray, colors):
+
+    def _create_latest_visualization(
+        self,
+        df: pd.DataFrame,
+        category_column: str,
+        measure_column: str,
+        unique_categories: np.ndarray,
+        colors,
+    ):
         """Create visualization for latest reports"""
         # Set width for bars
         bar_width = 0.2
         positions = np.arange(len(df[category_column].unique()))  # Positions for bars
-        
+
         # Create bars for each category
         for idx, category in enumerate(unique_categories):
             category_data = df[df[measure_column] == category]
-            
+
             plt.bar(
                 positions + (idx * bar_width),
                 category_data["Percentage"],
@@ -709,11 +819,13 @@ class StaffHealthAnalyzer:
                 label=f"{category}",
                 color=colors(idx),
             )
-            
+
         # Formatting
         plt.xlabel(category_column, fontsize=12)
         plt.ylabel("Percentage (%)", fontsize=12)
-        plt.title(f"Latest Analysis: {measure_column} by {category_column}", fontsize=14)
+        plt.title(
+            f"Latest Analysis: {measure_column} by {category_column}", fontsize=14
+        )
         plt.xticks(
             positions + (bar_width * (len(unique_categories) / 2)),
             df[category_column].unique(),
@@ -725,37 +837,41 @@ class StaffHealthAnalyzer:
 
 # Main execution section
 if __name__ == "__main__":
+
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+
     db_config = {
-        'host': 'localhost',
-        'port': '5432',
-        'dbname': 'your_db',
-        'user': 'your_user',
-        'password': 'your_password'
+        "host": config["db"]["host"],
+        "port": config["db"]["port"],
+        "dbname": config["db"]["dbname"],
+        "user": config["db"]["user"],
+        "password": config["db"]["password"],
     }
 
     # For mobile data
     mobile_analyzer = StaffHealthAnalyzer(
         data_path="staff_health_data.csv",
         mode="mobile",
-        api_key=os.environ.get("OPENAI_API_KEY"),
-        db_config=db_config
+        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
+        db_config=db_config,
     )
 
     # For kiosk data
     kiosk_analyzer = StaffHealthAnalyzer(
         data_path="staff_health_data_kiosk.csv",
         mode="kiosk",
-        api_key=os.environ.get("OPENAI_API_KEY"),
-        db_config=db_config
+        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
+        db_config=db_config,
     )
 
     # Generate report
-    generated_report = mobile_analyzer.run_analysis(
-        report_type="Trending",  # Latest | Trending
-        health_measure="BMI",  # Overall | BMI | Hypertension | Stress | Wellness
-        category="Monthly",  # Age_range, Gender, BMI, Overall | Weekly, Monthly, Quarterly, Yearly
+    generated_report = kiosk_analyzer.run_analysis(
+        report_type="Latest",  # Latest | Trending
+        health_measure="Overall",  # Overall | BMI | Hypertension | Stress | Wellness
+        category="Age_range",  # Age_range, Gender, BMI, Overall | Weekly, Monthly, Quarterly, Yearly
         with_summary=False,  # Set to True if have an API key
-        enable_display=True,  # Set to True to display visualization
+        enable_display=False,  # Set to True to display visualization
     )
 
     print("Generated Report:")
