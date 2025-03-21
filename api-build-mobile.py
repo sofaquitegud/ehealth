@@ -1,195 +1,240 @@
+# Import required libraries
+from fastapi import FastAPI, Depends
 from fastapi.responses import JSONResponse
-from fastapi import FastAPI, Query, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from enum import Enum
-from typing import Dict, Optional, Any
-from matplotlib import category
-from openai import api_key
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Dict, List, Optional, Any
 import pandas as pd
+import configparser
 import os
-import uvicorn
+from enum import Enum
 
-from sqlalchemy import JSON, desc
-from torch import Value
-import uvicorn
-
-# Import StaffHealthAnalyzer class
-from staff_health_analyzer import StaffHealthAnalyzer, HealthMeasure, VisualizationCategory, TimePeriod, ReportType
-import staff_health_analyzer
-
-# Create FastAPI app
-app = FastAPI()
-
-# Add CORS middleware to allow cross-origin requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
+# Import the StaffHealthAnalyzer class
+from staff_health_analyzer_mobile import (
+    StaffHealthAnalyzer,
+    HealthMeasure,
+    VisualizationCategory,
+    TimePeriod,
+    ReportType,
 )
 
-# Shared dependency to get the analyzer instance
-def get_analyzer():
-    data_path = os.getenv('HEALTH_DATA_PATH', 'staff_health_data.csv')
-    api_key = os.getenv('OPENAI_API_KEY', None)
+# Create FastAPI app
+app = FastAPI(
+    title="Staff Health Analyzer API",
+    description="API for analyzing and reporting staff health metrics",
+    version="1.0.0",
+)
 
-    return StaffHealthAnalyzer(data_path=data_path, api_key=api_key)
 
-# Response models
-class ReportResponse(BaseModel):
+# Read configuration file
+def get_config():
+    """Get configuration from config.ini file"""
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+    return config
+
+
+# Get database configuration from config.ini
+def get_db_config(config=None):
+    """Get database configuration from config.ini"""
+    if config is None:
+        config = get_config()
+
+    return {
+        "host": config["db"]["host"],
+        "port": config["db"]["port"],
+        "dbname": config["db"]["dbname"],
+        "user": config["db"]["user"],
+        "password": config["db"]["password"],
+    }
+
+
+# Define Pydantic models for request/response
+class AnalysisRequest(BaseModel):
+    report_type: str = Field("Latest", description="Latest or Trending")
+    health_measure: str = Field(
+        "Overall", description="Overall, Hypertension, Stress, Wellness, or BMI"
+    )
+    category: str = Field(
+        "Age_range",
+        description="For Latest: Overall, Age_range, Gender, BMI. For Trending: Weekly, Monthly, Quarterly, Yearly",
+    )
+    with_summary: bool = Field(
+        False, description="Whether to include natural language summary"
+    )
+
+
+class AnalysisResponse(BaseModel):
     report_type: str
     health_measure: str
     category: str
-    data: list
+    data: List[Dict[str, Any]]
     summary: Optional[str] = None
 
-# API routes
-@app.get('/', tags=['Root'])
+
+# Dependency for getting the analyzer
+def get_analyzer():
+    """Get the StaffHealthAnalyzer instance"""
+    config = get_config()
+
+    # Fixed data path for mobile
+    data_path = "staff_health_data.csv"
+
+    # Get API key from config
+    api_key = (
+        config["llm"]["api_key"]
+        if "llm" in config and "api_key" in config["llm"]
+        else None
+    )
+
+    return StaffHealthAnalyzer(
+        data_path=data_path, mode="mobile", api_key=api_key, db_config=get_db_config(config)
+    )
+
+
+# Root endpoint
+@app.get("/")
 async def root():
-    """Root endpoint"""
-    return {
-        'message': 'Staff Health Analysis API is running properly',
-        'version': '1.0.0',
-        'docs': '/docs'
-    }
+    return {"message": "Welcome to Staff Health Analyzer API"}
 
-@app.get('/health-measure', tags=['Metadata'])
-async def get_health_measure():
-    """Get all available health measures"""
-    measures = [measure.value for measure in HealthMeasure]
-    
-    return measures
 
-@app.get('/visualization-categories', tags=['Metadata'])
-async def get_visualization_categories():
-    """Get all available visualization categories for latest reports"""
-    categories = [category.value for category in VisualizationCategory]
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
-    return categories
 
-@app.get('/time-periods', tags=['Metadata'])
-async def get_time_periods():
-    """Get all available time periods for trending reports"""
-    periods = [period.value for period in TimePeriod]
-
-    return periods
-
-@app.get('/report-types', tags=['Metadata'])
-async def get_report_types():
-    """Get all available report types"""
-    report_types = [report_type.value for report_type in ReportType]
-
-    return report_types
-
-@app.get('/report', response_model=ReportResponse, tags=['Reports'])
-async def get_report(
-    report_type: str = Query(..., description='Type of report: Latest or Trending'),
-    health_measure: str = Query(..., description='Health measure to analyze'),
-    category: str = Query(..., description='Category or time period for the report'),
-    with_summary: bool = Query(False, description='Whether to include a natural language summary'),
-    analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
+# Analyze endpoint
+@app.post("/analyze", response_model=AnalysisResponse)
+async def analyze(
+    request: AnalysisRequest, analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
 ):
-    """
-    Generate a health analysis report based on specified parameters
-    
-    - **report_type**: 'Latest' for current snapshot or 'Trending' for time-based analysis
-    - **health_measure**: The health metric to analyze (Overall, BMI, Hypertension, Wellness)
-    - **category**:
-        - For Latest report: Overall, Age_range, Gender, BMI
-        - For Trending report: Weekly, Monthly, Quarterly, Yearly
-    - **with_summary**: Set to true to include AI-generated natural language summary
-    """
+    """Generate a health analysis report based on specified parameters"""
     try:
-        # Validate inputs
+        # Validate enum values
+        if request.report_type not in [rt.value for rt in ReportType]:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Invalid report_type: {request.report_type}"},
+            )
+
+        if request.health_measure not in [hm.value for hm in HealthMeasure]:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Invalid health_measure: {request.health_measure}"},
+            )
+
+        # Validate category based on report type
+        if request.report_type == "Latest":
+            valid_categories = [vc.value for vc in VisualizationCategory]
+            if request.category not in valid_categories:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": f"Invalid category for Latest report: {request.category}"
+                    },
+                )
+        elif request.report_type == "Trending":
+            valid_periods = [tp.value for tp in TimePeriod]
+            if request.category not in valid_periods:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": f"Invalid time period for Trending report: {request.category}"
+                    },
+                )
+
+        # Run analysis
+        result = analyzer.run_analysis(
+            report_type=request.report_type,
+            health_measure=request.health_measure,
+            category=request.category,
+            with_summary=request.with_summary,
+            enable_display=False,  # Disable visualization for API
+        )
+
+        # Convert DataFrame to list of dicts for JSON serialization
+        result["data"] = result["data"].to_dict(orient="records")
+
+        return result
+
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500, content={"error": f"An error occurred: {str(e)}"}
+        )
+
+
+# Get all reports endpoint
+@app.get("/reports/{report_type}")
+async def get_all_reports(
+    report_type: str, analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
+):
+    """Generate all reports of a specific type"""
+    try:
         if report_type not in [rt.value for rt in ReportType]:
             return JSONResponse(
                 status_code=400,
-                content={'error': f"Invalid report type: {report_type}. Expected 'Latest' or 'Trending'"}
+                content={"error": f"Invalid report_type: {report_type}"},
             )
-        
-        if health_measure not in [hm.value for hm in HealthMeasure]:
-            return JSONResponse(
-                status_code=400,
-                content={'error': f"Invalid health measure: {health_measure}. Expected 'Overall', 'BMI', 'Hypertension' or 'Wellness'"}
-            )
-        
-        # Validate category based on report type
-        if report_type == 'Latest':
-            if category not in [vc.value for vc in VisualizationCategory]:
-                return JSONResponse(
-                    status_code=400,
-                    content={'error': f"Invalid category: {category}. Expected 'Overall', 'Age_range', 'Gender', 'BMI'"}
-                )
-        elif report_type == 'Trending':
-            if category not in [tp.value for tp in TimePeriod]:
-                return JSONResponse(
-                    status_code=400,
-                    content={'error': f"Invalid periods: {category}. Expected 'Weekly', 'Monthly', 'Quarerly', 'Yearly'"}
-                )
-        
-        # Run analysis
-        result = analyzer.run_analysis(
-            report_type=report_type,
-            health_measure=health_measure,
-            category=category,
-            with_summary=with_summary
-        )
 
-        # Convert DataFrame to list for JSON serialization
-        result['data'] = result['data'].to_dict(orient='records')
-        
+        # Generate all reports
+        reports = analyzer.generate_all_reports(report_type)
+
+        # Convert DataFrames to lists of dicts for JSON serialization
+        result = {}
+        for key, df in reports.items():
+            result[key] = df.to_dict(orient="records")
+
         return result
-    
-    except ValueError as e:
-        
-        return JSONResponse(
-            status_code=400,
-            content={'error': str(e)}
-        )
+
     except Exception as e:
         return JSONResponse(
-            status_code=500,
-            content={'error': f"Unexpected error: {str(e)}"}
+            status_code=500, content={"error": f"An error occurred: {str(e)}"}
         )
-    
-@app.get('/all-latest-reports', tags=['Batch Reports'])
-async def get_all_latest_reports(
-    analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
-):
-    """Generate all latest report combinations"""
-    try:
-        reports = analyzer.generate_all_reports('Latest')
 
+
+# Get raw data endpoint (admin only)
+@app.get("/data")
+async def get_raw_data(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
+    """Get raw data (this could be protected by authentication in production)"""
+    try:
+        # Convert DataFrame to list of dicts for JSON serialization
+        return {"data": analyzer.df.to_dict(orient="records")}
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500, content={"error": f"An error occurred: {str(e)}"}
+        )
+
+
+# Configuration endpoint (without exposing sensitive info)
+@app.get("/config")
+async def get_config_info():
+    """Get non-sensitive configuration information"""
+    try:
+        config = get_config()
         return {
-            key: report.to_dict(orient='records') for key, report in reports.items()
+            "db": {
+                "host": config["db"]["host"],
+                "port": config["db"]["port"],
+                "dbname": config["db"]["dbname"],
+                "user": config["db"]["user"],
+                # Password is intentionally not included
+            },
+            "llm": {
+                "api_key_configured": "api_key" in config["llm"]
+                and bool(config["llm"]["api_key"])
+            },
         }
     except Exception as e:
-        
         return JSONResponse(
-            status_code=400,
-            content={'error': str(e)}
+            status_code=500, content={"error": f"An error occurred: {str(e)}"}
         )
-    
-@app.get('/all-trending-reports', tags=['Batch Reports'])
-async def get_all_trending_reports(
-    analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
-):
-    """Generate all trending report combinations"""
-    try:
-        reports = analyzer.generate_all_reports('Trending')
 
-        return {
-            key: report.to_dict(orient='records') for key, report in reports.items()
-        }
-    except Exception as e:
 
-        return JSONResponse(
-            status_code=400,
-            content={'error': str(e)}
-        )
-    
-# Main entry point
-if __name__ == '__main__':
-    uvicorn.run('api-build-mobile:app', host='0.0.0.0', port=8000, reload=True)
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
