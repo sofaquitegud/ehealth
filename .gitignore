@@ -3,6 +3,7 @@ __pycache__
 misc
 reports
 .env
+config.ini
 Dockerfile
 docker-compose.yml
 staff_health_data.csv
