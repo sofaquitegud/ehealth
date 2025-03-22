@@ -21,7 +21,7 @@ from staff_health_analyzer import (
 app = FastAPI(
     title="Staff Health Analyzer API",
     description="API for analyzing and reporting staff health metrics",
-    version="1.0.0",
+    version="1.2.0",
 )
 
 
@@ -114,7 +114,7 @@ async def root():
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    return {"status": "Unavailable"}
 
 
 # Analyze endpoint
@@ -122,7 +122,17 @@ async def health_check():
 async def analyze(
     request: AnalysisRequest, analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
 ):
-    """Generate a health analysis report based on specified parameters"""
+    """
+    Generate a health analysis report based on specified parameters
+
+    - **report_type**: 'Latest' for current snapshot or 'Trending' for time-based analysis
+    - **health_measure**: The health metric to analyze (Overall, Hypertension, BMI, Stress, Wellness)
+    - **category**:
+        - For Latest reports: Overall, Age_range, Gender, BMI
+        - For Trending reports: Weekly, Monthly, Quarterly, Yearly
+    - **with_summary**: Set to true to include AI-generated natural language summary
+    - **mode**: Set application mode 'mobile' (default) or 'kiosk' (BMI not supported)
+    """
     try:
         # Validate enum values
         if request.report_type not in [rt.value for rt in ReportType]:
