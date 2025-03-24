@@ -108,7 +108,15 @@ async def health_check():
 async def analyze(
     request: AnalysisRequest, analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
 ):
-    """Generate a health analysis report based on specified parameters"""
+    """
+    Generate a health analysis report based on specified parameters
+    - **report_type**: 'Latest' for current snapshot or 'Trending' for time-based analysis
+    - **health_measure**: The health metric to analyze (Overall, Hypertension, BMI, Stress, Wellness)
+    - **category**:
+        - For Latest reports: Overall, Age_range, Gender, BMI
+        - For Trending reports: Weekly, Monthly, Quarterly, Yearly
+    - **with_summary**: Set to true to include AI-generated natural language summary
+    """
     try:
         # Validate enum values
         if request.report_type not in [rt.value for rt in ReportType]:

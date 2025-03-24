@@ -4,8 +4,9 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import configparser
 from functools import lru_cache
-from typing import Dict, Optional, Union, List, Any
+from typing import Dict, Optional, Union, List, Any, Tuple
 from preprocessing import (
     HealthDataPreprocessor,
     HealthMeasure,
@@ -20,7 +21,11 @@ from preprocessing import (
 
 class StaffHealthAnalyzer:
     def __init__(
-        self, data_path: str, api_key: Optional[str] = None, mode: str = MODE_MOBILE
+        self, 
+        data_path: str, 
+        api_key: Optional[str] = None, 
+        mode: str = MODE_MOBILE,
+        db_config: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the health analyzer with staff health data
@@ -29,9 +34,10 @@ class StaffHealthAnalyzer:
         data_path (str): Path to the CSV file with staff health data
         api_key (str, optional): OpenAI API key for natural language summaries
         mode (str): Analysis mode - 'kiosk' or 'mobile'
+        db_config (dict, optional): Database configuration for PostgreSQL connection
         """
         # Initialize the preprocessor and get processed data
-        self.preprocessor = HealthDataPreprocessor(data_path, mode)
+        self.preprocessor = HealthDataPreprocessor(data_path, mode, db_config)
         self.df = self.preprocessor.get_processed_data()
         self.mode = mode
 
@@ -96,6 +102,9 @@ class StaffHealthAnalyzer:
         if self.mode == MODE_KIOSK:
             if health_measure == "BMI" or category == "BMI":
                 raise ValueError(ERROR_BMI_KIOSK)
+            # Add validation for demographic analysis in kiosk mode
+            if category in ["Age_range", "Gender"]:
+                raise ValueError(f"{category} analysis not available in kiosk mode.")
 
     @lru_cache(maxsize=32)
     def get_latest_data(self) -> pd.DataFrame:
@@ -216,7 +225,7 @@ class StaffHealthAnalyzer:
         # Process the data to generate the trending report
         return self._process_trending_data(df_filtered, measure_col, display_name)
 
-    def _filter_by_time_period(self, time_period: str) -> pd.DataFrame:
+    def _filter_by_time_period(self, time_period: str) -> Tuple[pd.DataFrame, str]:
         """Filter data and add time_period column based on selected time period"""
         df = self.df.copy()
 
@@ -261,7 +270,7 @@ class StaffHealthAnalyzer:
         return df, groupby_col
 
     def _process_trending_data(
-        self, filtered_data: tuple, measure_col: str, display_name: str
+        self, filtered_data: Tuple[pd.DataFrame, str], measure_col: str, display_name: str
     ) -> pd.DataFrame:
         """Process filtered data to generate trending report"""
         df, groupby_col = filtered_data

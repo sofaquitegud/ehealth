@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+import psycopg2
 from enum import Enum
 from typing import Dict, Optional, Any
 
@@ -50,13 +51,19 @@ class HealthDataPreprocessor:
     AGE_BINS = [0, 25, 35, 45, 55, 100]
     AGE_LABELS = ["18-25", "26-35", "36-45", "46-55", "55+"]
 
-    def __init__(self, data_path: str, mode: str = MODE_MOBILE):
+    def __init__(
+        self, 
+        data_path: str, 
+        mode: str = MODE_MOBILE,
+        db_config: Optional[Dict[str, str]] = None
+    ):
         """
         Initialize the health data preprocessor
 
         Parameters:
         data_path (str): Path to the CSV file with staff health data
         mode (str): Analysis mode - 'kiosk' or 'mobile'
+        db_config (dict, optional): Database configuration for PostgreSQL connection
         """
         # Validate and store the mode
         self.mode = mode.lower()
@@ -64,6 +71,9 @@ class HealthDataPreprocessor:
             raise ValueError(
                 f"Invalid mode: {mode}. Must be '{MODE_KIOSK}' or '{MODE_MOBILE}'"
             )
+            
+        # Store database configuration
+        self.db_config = db_config
 
         # Load and preprocess the dataset
         self.df = self._load_and_preprocess_data(data_path)
@@ -74,10 +84,42 @@ class HealthDataPreprocessor:
     def _load_and_preprocess_data(self, data_path: str) -> pd.DataFrame:
         """Load and preprocess the dataset"""
         # Load data
-        df = pd.read_csv(data_path)
+        try:
+            df = pd.read_csv(data_path)
+        except Exception as e:
+            print(f"Failed to load CSV data: {e}")
+            if self.db_config:
+                try:
+                    conn = psycopg2.connect(**self.db_config)
+
+                    if self.mode == MODE_MOBILE:
+                        query = """
+                            SELECT created_at AS date, username AS staff_id, gender, age, bmi, stressLevel, wellnessLevel, hypertensionRisk
+                            FROM mobile_table
+                            """
+                    else:
+                        query = """
+                            SELECT created_at AS date, email AS staff_id, stressLevel, wellnessLevel, hypertensionRisk
+                            FROM kiosk_table
+                        """
+
+                    df = pd.read_sql_query(query, conn)
+                    conn.close()
+                    print(f"Successfully loaded data from database in {self.mode} mode")
+                except Exception as db_error:
+                    raise ValueError(
+                        f"Failed to load data from both CSV and database: {db_error}"
+                    )
+            else:
+                raise ValueError(
+                    "Database configuration not provided and CSV file not found"
+                )
 
         # Convert date column to datetime
         df["date"] = pd.to_datetime(df["date"])
+
+        # Handle demographic data based on mode
+        df = self._handle_demographic_data(df)
 
         # Handle BMI based on mode
         df = self._handle_bmi_data(df)
@@ -110,6 +152,27 @@ class HealthDataPreprocessor:
         df = self._apply_value_mappings(df)
 
         return df
+        
+    def _handle_demographic_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Handle demographic data (age and gender) based on mode"""
+        df_copy = df.copy()
+
+        if self.mode == MODE_KIOSK:
+            if "age" not in df_copy.columns:
+                df_copy["age"] = 35  # Default value
+            if "gender" not in df_copy.columns:
+                df_copy["gender"] = "unknown"
+        elif self.mode == MODE_MOBILE:
+            if "age" not in df_copy.columns:
+                print("Warning: Age data missing in mobile mode. Using default values.")
+                df_copy["age"] = 35
+            if "gender" not in df_copy.columns:
+                print(
+                    "Warning: Gender data missing in mobile mode. Using default values."
+                )
+                df_copy["gender"] = "unknown"
+
+        return df_copy
 
     def _handle_bmi_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Handle BMI data based on mode"""

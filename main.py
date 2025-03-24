@@ -1,23 +1,39 @@
 # main.py
 
 import os
+import configparser
 from analytics import StaffHealthAnalyzer
 from preprocessing import MODE_MOBILE, MODE_KIOSK
 
 # Main execution section
 if __name__ == "__main__":
+    # Load configuration
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+    
+    # Set up database configuration
+    db_config = {
+        "host": config["db"]["host"],
+        "port": config["db"]["port"],
+        "dbname": config["db"]["dbname"],
+        "user": config["db"]["user"],
+        "password": config["db"]["password"],
+    }
+
     # For mobile data
     mobile_analyzer = StaffHealthAnalyzer(
         data_path="staff_health_data.csv",
         mode=MODE_MOBILE,
-        api_key=os.environ.get("OPENAI_API_KEY"),
+        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
+        db_config=db_config,
     )
 
     # For kiosk data
     kiosk_analyzer = StaffHealthAnalyzer(
         data_path="staff_health_data_kiosk.csv",
         mode=MODE_KIOSK,
-        api_key=os.environ.get("OPENAI_API_KEY"),
+        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
+        db_config=db_config,
     )
 
     # Generate report
