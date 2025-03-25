@@ -866,7 +866,7 @@ if __name__ == "__main__":
     )
 
     # Generate report
-    generated_report = kiosk_analyzer.run_analysis(
+    generated_report = mobile_analyzer.run_analysis(
         report_type="Latest",  # Latest | Trending
         health_measure="Overall",  # Overall | BMI | Hypertension | Stress | Wellness
         category="Age_range",  # Age_range, Gender, BMI, Overall | Weekly, Monthly, Quarterly, Yearly
@@ -881,24 +881,3 @@ if __name__ == "__main__":
     if "summary" in generated_report:
         print("\nSummary:")
         print(generated_report["summary"])
-
-    # Example of generating all reports
-    """
-    # Generate and save all latest reports
-    print('Generating and saving latest reports...')
-    all_latest_reports = mobile_analyzer.generate_all_reports("Latest")
-    for key, report in all_latest_reports.items():
-        os.makedirs("reports/latest", exist_ok=True)
-        filename = f"reports/latest/{key}.csv"
-        report.to_csv(filename, index=False)
-        print(f"Saved {filename}")
-
-    # Generate and save all trending reports
-    print('Generating and saving trending reports...')
-    all_trending_reports = mobile_analyzer.generate_all_reports("Trending")
-    for key, report in all_trending_reports.items():
-        os.makedirs("reports/trending", exist_ok=True)
-        filename = f"reports/trending/{key}.csv"
-        report.to_csv(filename, index=False)
-        print(f"Saved {filename}")
-    """
