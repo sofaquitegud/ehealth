@@ -2,7 +2,8 @@
 
 import pandas as pd
 import numpy as np
-import psycopg2
+import os
+from sqlalchemy import create_engine
 from enum import Enum
 from typing import Dict, Optional, Any
 
@@ -12,6 +13,11 @@ MODE_KIOSK = "kiosk"
 MODE_MOBILE = "mobile"
 ERROR_BMI_KIOSK = "BMI analysis not available in kiosk mode."
 
+# Database connection
+def create_db_engine():
+    """Create SQLAlchemy engine from environment variables"""
+    db_url = f"postgresql+psycopg://{os.getenv('user')}:{os.getenv('pass')}@localhost:5432/{os.getenv('db')}"
+    return create_engine(db_url, echo=True, future=True)
 
 class HealthMeasure(Enum):
     OVERALL = "Overall"
@@ -63,7 +69,7 @@ class HealthDataPreprocessor:
         Parameters:
         data_path (str): Path to the CSV file with staff health data
         mode (str): Analysis mode - 'kiosk' or 'mobile'
-        db_config (dict, optional): Database configuration for PostgreSQL connection
+        db_config (dict, optional): Deprecated. Database now uses environment variables
         """
         # Validate and store the mode
         self.mode = mode.lower()
@@ -71,9 +77,6 @@ class HealthDataPreprocessor:
             raise ValueError(
                 f"Invalid mode: {mode}. Must be '{MODE_KIOSK}' or '{MODE_MOBILE}'"
             )
-            
-        # Store database configuration
-        self.db_config = db_config
 
         # Load and preprocess the dataset
         self.df = self._load_and_preprocess_data(data_path)
@@ -88,31 +91,26 @@ class HealthDataPreprocessor:
             df = pd.read_csv(data_path)
         except Exception as e:
             print(f"Failed to load CSV data: {e}")
-            if self.db_config:
-                try:
-                    conn = psycopg2.connect(**self.db_config)
+            try:
+                # Create database engine
+                engine = create_db_engine()
 
-                    if self.mode == MODE_MOBILE:
-                        query = """
-                            SELECT created_at AS date, username AS staff_id, gender, age, bmi, stressLevel, wellnessLevel, hypertensionRisk
-                            FROM mobile_table
-                            """
-                    else:
-                        query = """
-                            SELECT created_at AS date, email AS staff_id, stressLevel, wellnessLevel, hypertensionRisk
-                            FROM kiosk_table
+                if self.mode == MODE_MOBILE:
+                    query = """
+                        SELECT created_at AS date, username AS staff_id, gender, age, bmi, stressLevel, wellnessLevel, hypertensionRisk
+                        FROM mobile_table
                         """
+                else:
+                    query = """
+                        SELECT created_at AS date, email AS staff_id, stressLevel, wellnessLevel, hypertensionRisk
+                        FROM kiosk_table
+                    """
 
-                    df = pd.read_sql_query(query, conn)
-                    conn.close()
-                    print(f"Successfully loaded data from database in {self.mode} mode")
-                except Exception as db_error:
-                    raise ValueError(
-                        f"Failed to load data from both CSV and database: {db_error}"
-                    )
-            else:
+                df = pd.read_sql_query(query, engine)
+                print(f"Successfully loaded data from database in {self.mode} mode")
+            except Exception as db_error:
                 raise ValueError(
-                    "Database configuration not provided and CSV file not found"
+                    f"Failed to load data from both CSV and database: {db_error}"
                 )
 
         # Convert date column to datetime

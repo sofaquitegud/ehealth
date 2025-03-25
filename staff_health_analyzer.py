@@ -1,20 +1,30 @@
 # Import Libraries
-import configparser
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import psycopg2
+from sqlalchemy import create_engine
 from enum import Enum
-from typing import Dict, Optional, Any
+from dotenv import load_dotenv
+from typing import Dict, Optional, Any, Tuple
 from functools import lru_cache
 
+
+# Load environment variables
+load_dotenv()
 
 # Constants
 DEFAULT_BMI_VALUE = 22.0
 MODE_KIOSK = "kiosk"
 MODE_MOBILE = "mobile"
 ERROR_BMI_KIOSK = "BMI analysis not available in kiosk mode."
+
+
+# Database connection
+def create_db_engine():
+    """Create SQLAlchemy engine from environment variables"""
+    db_url = f"postgresql+psycopg://{os.getenv('user')}:{os.getenv('pass')}@{os.getenv('host')}:{os.getenv('port')}/{os.getenv('dbname')}"
+    return create_engine(db_url, echo=True, future=True)
 
 
 class HealthMeasure(Enum):
@@ -60,7 +70,6 @@ class StaffHealthAnalyzer:
         data_path: str,
         api_key: Optional[str] = None,
         mode: str = MODE_MOBILE,
-        db_config: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the health analyzer with staff health data
@@ -69,7 +78,6 @@ class StaffHealthAnalyzer:
         data_path (str): Path to the CSV file with staff health data
         api_key (str, optional): OpenAI API key for natural language summaries
         mode (str): Analysis mode - 'kiosk' or 'mobile'
-        db_config (dict, optional): Database configuration for PostgreSQL connection
         """
         # Validate and store the mode
         self.mode = mode.lower()
@@ -77,9 +85,6 @@ class StaffHealthAnalyzer:
             raise ValueError(
                 f"Invalid mode: {mode}. Must be '{MODE_KIOSK}' or '{MODE_MOBILE}'"
             )
-
-        # Store database configuration
-        self.db_config = db_config
 
         # Load and preprocess the dataset
         self.df = self._load_and_preprocess_data(data_path)
@@ -91,41 +96,62 @@ class StaffHealthAnalyzer:
         self.llm = self._initialize_llm(api_key)
 
     def _load_and_preprocess_data(self, data_path: str) -> pd.DataFrame:
-        """Load and preprocess the dataset"""
-        # Load data
+        """Load and preprocess the dataset directly from database"""
         try:
-            df = pd.read_csv(data_path)
-        except Exception as e:
-            print(f"Failed to load CSV data: {e}")
-            if self.db_config:
-                try:
-                    conn = psycopg2.connect(**self.db_config)
+            # Create database engine
+            engine = create_db_engine()
 
-                    if self.mode == MODE_MOBILE:
-                        query = """
-                            SELECT created_at AS date, username AS staff_id, gender, age, bmi, stressLevel, wellnessLevel, hypertensionRisk
-                            FROM mobile_table
-                            """
-                    else:
-                        query = """
-                            SELECT created_at AS date, email AS staff_id, stressLevel, wellnessLevel, hypertensionRisk
-                            FROM kiosk_table
-                        """
-
-                    df = pd.read_sql_query(query, conn)
-                    conn.close()
-                    print(f"Successfully loaded data from database in {self.mode} mode")
-                except Exception as db_error:
-                    raise ValueError(
-                        f"Failed to load data from both CSV and database: {db_error}"
-                    )
+            if self.mode == MODE_MOBILE:
+                # Get all columns but convert timestamp columns in SQL
+                query = """
+                SELECT
+                    
+                    to_timestamp(o.created_at/1000) as date,
+                    to_timestamp(o.updated_at/1000) as updated_at_datetime,
+                    u.gender as gender,
+                    o.bmi as bmi,
+                    o.stresslevel as stressLevel,
+                    o.wellnesslevel as wellnessLevel,
+                    o.hypertensionrisk as hypertensionRisk,
+                    o.age as age
+                FROM obsv_latest_v2 o
+                inner join users u
+                on o.user_id = u.user_id
+                """
+            elif self.mode == MODE_KIOSK:
+                # Get all columns but convert timestamp columns in SQL
+                query = """
+                SELECT 
+                    to_timestamp(created_at/1000) as date,
+                    stresslevel as stressLevel,
+                    wellnesslevel as wellnessLevel,
+                    hypertensionrisk as hypertensionRisk,
+                    age,
+                    gender
+                FROM kiosk_table
+                """
             else:
-                raise ValueError(
-                    "Database configuration not provided and CSV file not found"
-                )
-
-        # Convert date column to datetime
-        df["date"] = pd.to_datetime(df["date"])
+                raise ValueError(f"Invalid mode: {self.mode}")
+            
+            # Execute query
+            df = pd.read_sql_query(query, engine)
+            print(f"Successfully loaded data from database in {self.mode} mode")
+            
+            # Display raw data in terminal
+            print("\n----- RAW DATA FROM DATABASE -----")
+            print(df.head(10))  # Display first 10 rows
+            print(f"\nTotal records: {len(df)}")
+            print(f"Columns: {df.columns.tolist()}")
+            print("-------------------------------------\n")
+            
+            # Save raw data to CSV file for backup/inspection
+            timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+            output_file = f"database_export_{self.mode}_{timestamp}.csv"
+            df.to_csv(output_file, index=False)
+            print(f"Raw database data saved to {output_file}")
+            
+        except Exception as db_error:
+            raise ValueError(f"Failed to load data from database: {db_error}")
 
         # Handle demographic data based on mode
         df = self._handle_demographic_data(df)
@@ -837,44 +863,30 @@ class StaffHealthAnalyzer:
 
 # Main execution section
 if __name__ == "__main__":
-
-    config = configparser.ConfigParser()
-    config.read("config.ini")
-
-    db_config = {
-        "host": config["db"]["host"],
-        "port": config["db"]["port"],
-        "dbname": config["db"]["dbname"],
-        "user": config["db"]["user"],
-        "password": config["db"]["password"],
-    }
-
-    # For mobile data
+    # For mobile data using database
     mobile_analyzer = StaffHealthAnalyzer(
-        data_path="staff_health_data.csv",
-        mode="mobile",
-        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
-        db_config=db_config,
+        data_path="",  # Path not needed anymore but kept for compatibility
+        mode=MODE_MOBILE,
+        api_key=os.environ.get("OPENAI_API_KEY"),
     )
 
-    # For kiosk data
+    # For kiosk data using database
     kiosk_analyzer = StaffHealthAnalyzer(
-        data_path="staff_health_data_kiosk.csv",
-        mode="kiosk",
-        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
-        db_config=db_config,
+        data_path="",  # Path not needed anymore but kept for compatibility
+        mode=MODE_KIOSK,
+        api_key=os.environ.get("OPENAI_API_KEY"),
     )
-
-    # Generate report
-    generated_report = mobile_analyzer.run_analysis(
-        report_type="Latest",  # Latest | Trending
-        health_measure="Overall",  # Overall | BMI | Hypertension | Stress | Wellness
-        category="Age_range",  # Age_range, Gender, BMI, Overall | Weekly, Monthly, Quarterly, Yearly
-        with_summary=False,  # Set to True if have an API key
-        enable_display=False,  # Set to True to display visualization
+    
+    # Example analyses
+    print("\nGenerating Report...")
+    generated_report = kiosk_analyzer.run_analysis(
+        report_type="Trending",
+        health_measure="Overall",
+        category="Weekly",
+        with_summary=False,
+        enable_display=True,
     )
-
-    print("Generated Report:")
+    print("\nGenerated Report and Summary:")
     print(generated_report["data"])
 
     # Print summary if available

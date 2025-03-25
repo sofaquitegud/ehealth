@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import configparser
 from functools import lru_cache
 from typing import Dict, Optional, Union, List, Any, Tuple
 from preprocessing import (
@@ -25,7 +24,6 @@ class StaffHealthAnalyzer:
         data_path: str, 
         api_key: Optional[str] = None, 
         mode: str = MODE_MOBILE,
-        db_config: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the health analyzer with staff health data
@@ -34,10 +32,9 @@ class StaffHealthAnalyzer:
         data_path (str): Path to the CSV file with staff health data
         api_key (str, optional): OpenAI API key for natural language summaries
         mode (str): Analysis mode - 'kiosk' or 'mobile'
-        db_config (dict, optional): Database configuration for PostgreSQL connection
         """
         # Initialize the preprocessor and get processed data
-        self.preprocessor = HealthDataPreprocessor(data_path, mode, db_config)
+        self.preprocessor = HealthDataPreprocessor(data_path, mode)
         self.df = self.preprocessor.get_processed_data()
         self.mode = mode
 
