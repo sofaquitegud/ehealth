@@ -727,50 +727,78 @@ class StaffHealthAnalyzer:
             # Format data for the prompt
             formatted_data = self.format_table(data)
 
-            # Create a more specific prompt that includes JSON structure requirements
-            json_prompt = f"""
-            {self.RECOMMENDATIONS_PROMPT}
-            
-            Please provide your response in the following JSON format:
-            {{
-                "recommendations": [
-                    {{
-                        "action": "string",
-                        "action_keyword": "string",
-                        "action_details": "string",
-                        "target_group": "string",
-                        "priority": integer
-                    }}
-                ],
-                "report_metadata": {{
-                    "report_type": "Latest" or "Trending",
-                    "health_measurement": "Overall", "Hypertension", "Stress", "Wellness", or "BMI",
-                    "visualization_category": "Overall", "By Age Range", "By Gender", "By BMI", "yearly", "quarterly", "monthly", or "weekly"
-                }}
-            }}
-            
-            Report Type: {report_type}
-            Health Measurement: {health_measurement}
-            Visualization Category: {visualization_category}
-            Data: {formatted_data}
-            """
-
-            response = self.openai_client.chat.completions.create(
-                model="o3-mini",
-                messages=[
+            response = self.openai_client.responses.create(
+                model="o3-mini",  # Use your preferred model
+                input=[
                     {
-                        "role": "system",
-                        "content": "You are a workplace health advisor. Always respond with valid JSON following the specified format."
+                        "role": "system", 
+                        "content": self.RECOMMENDATIONS_PROMPT
                     },
                     {
-                        "role": "user",
-                        "content": json_prompt
+                        "role": "user", 
+                        "content": f"""
+                        Report Type: {report_type}
+                        Health Measurement: {health_measurement}
+                        Visualization Category: {visualization_category}
+                        Data: {formatted_data}
+                        """
                     }
-                ]
+                ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "health_recommendations",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "recommendations": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "action": {"type": "string"},
+                                            "action_keyword": {"type": "string"}, 
+                                            "action_details": {"type": "string"},
+                                            "target_group": {"type": "string"},
+                                            "priority": {
+                                                "type": "integer"
+                                            }
+                                        },
+                                        "required": ["action","action_keyword", "action_details", "target_group", "priority"],
+                                        "additionalProperties": False
+                                    }
+                                },
+                                "report_metadata": {
+                                    "type": "object",
+                                    "properties": {
+                                        "report_type": {
+                                            "type": "string",
+                                            "enum": ["Latest", "Trending"]
+                                        },
+                                        "health_measurement": {
+                                            "type": "string",
+                                            "enum": ["Overall", "Hypertension", "Stress", "Wellness", "BMI"]
+                                        },
+                                        "visualization_category": {
+                                            "type": "string",
+                                            "enum": ["Overall", "By Age Range", "By Gender", "By BMI", "yearly", "quarterly","monthly", "weekly"]
+                                        }
+                                    },
+                                    "required": ["report_type", "health_measurement", "visualization_category"],
+                                    "additionalProperties": False
+                                }
+                            },
+                            "required": ["recommendations", "report_metadata"],
+                            "additionalProperties": False
+                        },
+                        "strict": True
+                    }
+                }
             )
 
-            # Parse and return the recommendations
-            return json.loads(response.choices[0].message.content)
+            # Parse the output
+            return json.loads(response.output_text)
+
         except Exception as e:
             print(f"Error generating health recommendations: {e}")
             return None
