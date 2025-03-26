@@ -4,9 +4,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any
 import pandas as pd
-import configparser
 import os
 from enum import Enum
+from dotenv import load_dotenv
 
 # Import the StaffHealthAnalyzer class
 from staff_health_analyzer import (
@@ -15,7 +15,12 @@ from staff_health_analyzer import (
     VisualizationCategory,
     TimePeriod,
     ReportType,
+    MODE_KIOSK,
+    MODE_MOBILE,
 )
+
+# Load environment variables
+load_dotenv()
 
 # Create FastAPI app
 app = FastAPI(
@@ -23,30 +28,6 @@ app = FastAPI(
     description="API for analyzing and reporting staff health metrics",
     version="1.2.0",
 )
-
-
-# Read configuration file
-def get_config():
-    """Get configuration from config.ini file"""
-    config = configparser.ConfigParser()
-    config.read("config.ini")
-    return config
-
-
-# Get database configuration from config.ini
-def get_db_config(config=None):
-    """Get database configuration from config.ini"""
-    if config is None:
-        config = get_config()
-
-    return {
-        "host": config["db"]["host"],
-        "port": config["db"]["port"],
-        "dbname": config["db"]["dbname"],
-        "user": config["db"]["user"],
-        "password": config["db"]["password"],
-    }
-
 
 # Define Pydantic models for request/response
 class AnalysisRequest(BaseModel):
@@ -74,8 +55,8 @@ class AnalysisResponse(BaseModel):
 
 # Define API mode enum
 class AnalysisMode(str, Enum):
-    KIOSK = "kiosk"
-    MOBILE = "mobile"
+    KIOSK = MODE_KIOSK
+    MOBILE = MODE_MOBILE
 
 
 # Dependency for getting the appropriate analyzer
@@ -85,23 +66,16 @@ def get_analyzer(
     )
 ):
     """Get the appropriate StaffHealthAnalyzer instance based on mode"""
-    config = get_config()
+    # Get API key from environment variables
+    api_key = os.getenv("OPENAI_API_KEY")
 
-    data_path = (
-        "staff_health_data.csv"
-        if mode == AnalysisMode.MOBILE
-        else "staff_health_data_kiosk.csv"
-    )
-
-    # Get API key from config
-    api_key = (
-        config["llm"]["api_key"]
-        if "llm" in config and "api_key" in config["llm"]
-        else None
-    )
+    # Use empty string to trigger database fallback
+    data_path = ""
 
     return StaffHealthAnalyzer(
-        data_path=data_path, mode=mode, api_key=api_key, db_config=get_db_config(config)
+        data_path=data_path,
+        mode=mode,
+        api_key=api_key
     )
 
 
@@ -114,7 +88,7 @@ async def root():
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"status": "Unavailable"}
+    return {"status": "Available"}
 
 
 # Analyze endpoint
@@ -238,18 +212,16 @@ async def get_raw_data(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
 async def get_config_info():
     """Get non-sensitive configuration information"""
     try:
-        config = get_config()
         return {
             "db": {
-                "host": config["db"]["host"],
-                "port": config["db"]["port"],
-                "dbname": config["db"]["dbname"],
-                "user": config["db"]["user"],
+                "host": os.getenv("host"),
+                "port": os.getenv("port"),
+                "dbname": os.getenv("dbname"),
+                "user": os.getenv("user"),
                 # Password is intentionally not included
             },
             "llm": {
-                "api_key_configured": "api_key" in config["llm"]
-                and bool(config["llm"]["api_key"])
+                "api_key_configured": bool(os.getenv("OPENAI_API_KEY"))
             },
         }
     except Exception as e:

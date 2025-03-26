@@ -96,16 +96,19 @@ class StaffHealthAnalyzer:
         self.llm = self._initialize_llm(api_key)
 
     def _load_and_preprocess_data(self, data_path: str) -> pd.DataFrame:
-        """Load and preprocess the dataset directly from database"""
+        """Load and preprocess the dataset"""
+        # Load data
         try:
-            # Create database engine
-            engine = create_db_engine()
+            df = pd.read_csv(data_path)
+        except Exception as e:
+            print(f"Failed to load CSV data: {e}")
+            try:
+                # Create database engine
+                engine = create_db_engine()
 
-            if self.mode == MODE_MOBILE:
-                # Get all columns but convert timestamp columns in SQL
-                query = """
-                SELECT
-                    
+                if self.mode == MODE_MOBILE:
+                    query = """
+                    SELECT
                     to_timestamp(o.created_at/1000) as date,
                     to_timestamp(o.updated_at/1000) as updated_at_datetime,
                     u.gender as gender,
@@ -114,44 +117,41 @@ class StaffHealthAnalyzer:
                     o.wellnesslevel as wellnessLevel,
                     o.hypertensionrisk as hypertensionRisk,
                     o.age as age
-                FROM obsv_latest_v2 o
-                inner join users u
-                on o.user_id = u.user_id
-                """
-            elif self.mode == MODE_KIOSK:
-                # Get all columns but convert timestamp columns in SQL
-                query = """
-                SELECT 
+                    FROM obsv_latest_v2 o
+                    INNER JOIN users u
+                    on o.user_id = u.user_id
+                    """
+                elif self.mode == MODE_KIOSK:
+                    query = """
+                    SELECT 
                     to_timestamp(created_at/1000) as date,
                     stresslevel as stressLevel,
                     wellnesslevel as wellnessLevel,
                     hypertensionrisk as hypertensionRisk,
                     age,
                     gender
-                FROM kiosk_table
-                """
-            else:
-                raise ValueError(f"Invalid mode: {self.mode}")
-            
-            # Execute query
-            df = pd.read_sql_query(query, engine)
-            print(f"Successfully loaded data from database in {self.mode} mode")
-            
-            # Display raw data in terminal
-            print("\n----- RAW DATA FROM DATABASE -----")
-            print(df.head(10))  # Display first 10 rows
-            print(f"\nTotal records: {len(df)}")
-            print(f"Columns: {df.columns.tolist()}")
-            print("-------------------------------------\n")
-            
-            # Save raw data to CSV file for backup/inspection
-            timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-            output_file = f"database_export_{self.mode}_{timestamp}.csv"
-            df.to_csv(output_file, index=False)
-            print(f"Raw database data saved to {output_file}")
-            
-        except Exception as db_error:
-            raise ValueError(f"Failed to load data from database: {db_error}")
+                    FROM kiosk_table"""
+                else:
+                    raise ValueError(f"Invalid mode: {self.mode}")
+                
+                # Execute query
+                df = pd.read_sql_query(query, engine)
+                print(f"Successfully loaded data from database in {self.mode} mode")
+                
+                # Display raw data in terminal
+                print(f"\n----- RAW DATA FROM {self.mode} TABLE -----")
+                print(df.head(10))  # Display first 10 rows
+                print(f"\nTotal records: {len(df)}")
+                print(f"Columns: {df.columns.tolist()}")
+                print("-------------------------------------\n")
+                
+            except Exception as db_error:
+                raise ValueError(
+                    f"Failed to load data from both CSV and database: {db_error}"
+                )
+
+        # Convert date column to datetime
+        df["date"] = pd.to_datetime(df["date"])
 
         # Handle demographic data based on mode
         df = self._handle_demographic_data(df)
@@ -863,26 +863,49 @@ class StaffHealthAnalyzer:
 
 # Main execution section
 if __name__ == "__main__":
-    # For mobile data using database
-    mobile_analyzer = StaffHealthAnalyzer(
-        data_path="",  # Path not needed anymore but kept for compatibility
-        mode=MODE_MOBILE,
-        api_key=os.environ.get("OPENAI_API_KEY"),
-    )
+    # Set use_database flag
+    use_database = True  # Set to False to use CSV files instead
 
-    # For kiosk data using database
-    kiosk_analyzer = StaffHealthAnalyzer(
-        data_path="",  # Path not needed anymore but kept for compatibility
-        mode=MODE_KIOSK,
-        api_key=os.environ.get("OPENAI_API_KEY"),
-    )
-    
+    if use_database:
+        # For mobile data using database
+        mobile_analyzer = StaffHealthAnalyzer(
+            data_path="",  # This will trigger database fallback
+            mode=MODE_MOBILE,
+            api_key=os.environ.get("OPENAI_API_KEY"),
+        )
+
+        # For kiosk data using database
+        kiosk_analyzer = StaffHealthAnalyzer(
+            data_path="",  # This will trigger database fallback
+            mode=MODE_KIOSK,
+            api_key=os.environ.get("OPENAI_API_KEY"),
+        )
+        
+        # Save raw data to CSV file
+        output_file = "kiosk_data_export.csv"
+        kiosk_analyzer.df.to_csv(output_file, index=False)
+        print(f"\nRaw kiosk data saved to {output_file}")
+    else:
+        # For mobile data using CSV
+        mobile_analyzer = StaffHealthAnalyzer(
+            data_path=os.environ.get("STAFF_HEALTH_DATA_MOBILE"),
+            mode=MODE_MOBILE,
+            api_key=os.environ.get("OPENAI_API_KEY"),
+        )
+
+        # For kiosk data using CSV
+        kiosk_analyzer = StaffHealthAnalyzer(
+            data_path=os.environ.get("STAFF_HEALTH_DATA_KIOSK"),
+            mode=MODE_KIOSK,
+            api_key=os.environ.get("OPENAI_API_KEY"),
+        )
+
     # Example analyses
     print("\nGenerating Report...")
-    generated_report = kiosk_analyzer.run_analysis(
+    generated_report = mobile_analyzer.run_analysis(
         report_type="Trending",
-        health_measure="Overall",
-        category="Weekly",
+        health_measure="Hypertension",
+        category="Gender",
         with_summary=False,
         enable_display=True,
     )
