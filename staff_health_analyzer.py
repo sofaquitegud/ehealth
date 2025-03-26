@@ -272,7 +272,7 @@ class StaffHealthAnalyzer:
         }
 
         # LLM system prompt
-        self.system_prompt = """Act as a health data analyst tasked with summarizing the health status of employees in a company. Below are the specifications for the report:
+        self.SYSTEM_PROMPT = """Act as a health data analyst tasked with summarizing the health status of employees in a company. Below are the specifications for the report:
         *Report Type*: {report_type}  
         *Health Measurement*: {health_measurement}  
         *Visualization Category*: {visualization_category}  
@@ -675,7 +675,7 @@ class StaffHealthAnalyzer:
 
         formatted_table = self.format_table(data)
 
-        formatted_prompt = self.system_prompt.format(
+        formatted_prompt = self.SYSTEM_PROMPT.format(
             report_type=report_type,
             health_measurement=health_measure,
             visualization_category=category,
@@ -684,11 +684,11 @@ class StaffHealthAnalyzer:
 
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[
                     {
                         "role": "system",
-                        "content": self.RECOMMENDATIONS_PROMPT
+                        "content": self.SYSTEM_PROMPT
                     },
                     {
                         "role": "user",
