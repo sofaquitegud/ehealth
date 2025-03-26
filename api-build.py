@@ -7,6 +7,10 @@ import pandas as pd
 import configparser
 import os
 from enum import Enum
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Import the StaffHealthAnalyzer class
 from staff_health_analyzer import (
@@ -61,6 +65,9 @@ class AnalysisRequest(BaseModel):
     with_summary: bool = Field(
         False, description="Whether to include natural language summary"
     )
+    with_recommendations: bool = Field(
+        False, description="Whether to include health recommendations"
+    )
 
 
 class AnalysisResponse(BaseModel):
@@ -70,6 +77,7 @@ class AnalysisResponse(BaseModel):
     mode: str
     data: List[Dict[str, Any]]
     summary: Optional[str] = None
+    recommendations: Optional[Dict[str, Any]] = None
 
 
 # Define API mode enum
@@ -93,12 +101,8 @@ def get_analyzer(
         else "staff_health_data_kiosk.csv"
     )
 
-    # Get API key from config
-    api_key = (
-        config["llm"]["api_key"]
-        if "llm" in config and "api_key" in config["llm"]
-        else None
-    )
+    # Get API key from environment variable
+    api_key = os.getenv("OPENAI_API_KEY")
 
     return StaffHealthAnalyzer(
         data_path=data_path, mode=mode, api_key=api_key, db_config=get_db_config(config)
@@ -164,6 +168,7 @@ async def analyze(
             category=request.category,
             with_summary=request.with_summary,
             enable_display=False,  # Disable visualization for API
+            with_recommendations=request.with_recommendations,
         )
 
         # Convert DataFrame to list of dicts for JSON serialization
@@ -238,8 +243,7 @@ async def get_config_info():
                 # Password is intentionally not included
             },
             "llm": {
-                "api_key_configured": "api_key" in config["llm"]
-                and bool(config["llm"]["api_key"])
+                "api_key_configured": bool(os.getenv("OPENAI_API_KEY"))
             },
         }
     except Exception as e:

@@ -6,9 +6,14 @@ import numpy as np
 import os
 import psycopg2
 from enum import Enum
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from functools import lru_cache
+import json
+from openai import OpenAI
+from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
 
 # Constants
 DEFAULT_BMI_VALUE = 22.0
@@ -55,6 +60,11 @@ class StaffHealthAnalyzer:
     AGE_BINS = [0, 25, 35, 45, 55, 100]
     AGE_LABELS = ["18-25", "26-35", "36-45", "46-55", "55+"]
 
+    # System prompt for health recommendations
+    RECOMMENDATIONS_PROMPT = """  
+    Act as a workplace health advisor tasked with generating actionable recommendations to improve employee health based on data insights. Analyze the provided data and generate prioritized recommendations.
+    """
+
     def __init__(
         self,
         data_path: str,
@@ -67,7 +77,7 @@ class StaffHealthAnalyzer:
 
         Parameters:
         data_path (str): Path to the CSV file with staff health data
-        api_key (str, optional): OpenAI API key for natural language summaries
+        api_key (str, optional): OpenAI API key for natural language summaries and recommendations
         mode (str): Analysis mode - 'kiosk' or 'mobile'
         db_config (dict, optional): Database configuration for PostgreSQL connection
         """
@@ -87,8 +97,8 @@ class StaffHealthAnalyzer:
         # Initialize mappings
         self._initialize_mappings()
 
-        # Initialize LLM if API key is provided
-        self.llm = self._initialize_llm(api_key)
+        # Initialize OpenAI client if API key is provided
+        self.openai_client = self._initialize_openai_client(api_key)
 
     def _load_and_preprocess_data(self, data_path: str) -> pd.DataFrame:
         """Load and preprocess the dataset"""
@@ -334,18 +344,18 @@ class StaffHealthAnalyzer:
         else:
             return "risky"
 
-    def _initialize_llm(self, api_key: Optional[str]) -> Any:
-        """Initialize LLM if API key is provided"""
+    def _initialize_openai_client(self, api_key: Optional[str]) -> Optional[OpenAI]:
+        """Initialize OpenAI client if API key is provided"""
         if not api_key:
-            return None
+            # Try to get API key from environment variable
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                return None
 
         try:
-            from langchain_openai import ChatOpenAI
-
-            os.environ["OPENAI_API_KEY"] = api_key
-            return ChatOpenAI(model="gpt-4o")
-        except ImportError:
-            print("Import unsuccessful. Please `pip install langchain_openai`")
+            return OpenAI(api_key=api_key)
+        except Exception as e:
+            print(f"Failed to initialize OpenAI client: {e}")
             return None
 
     def _validate_request(self, health_measure: str, category: str = None) -> None:
@@ -658,9 +668,9 @@ class StaffHealthAnalyzer:
         Returns:
         str: Natural language summary or message if LLM not available
         """
-        if not self.llm:
+        if not self.openai_client:
             return (
-                "LLM not available. Set API key to enable natural language summaries."
+                "OpenAI client not available. Set API key to enable natural language summaries and recommendations."
             )
 
         formatted_table = self.format_table(data)
@@ -673,9 +683,97 @@ class StaffHealthAnalyzer:
         )
 
         try:
-            return self.llm.invoke(formatted_prompt).content
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self.RECOMMENDATIONS_PROMPT
+                    },
+                    {
+                        "role": "user",
+                        "content": formatted_prompt
+                    }
+                ]
+            )
+
+            return response.choices[0].message.content
         except Exception as e:
             return f"Error generating summary: {str(e)}"
+
+    def generate_health_recommendations(
+        self,
+        report_type: str,
+        health_measurement: str,
+        visualization_category: str,
+        data: pd.DataFrame,
+    ) -> Optional[Dict]:
+        """
+        Generate health recommendations based on the analysis data using OpenAI
+
+        Parameters:
+        report_type (str): Type of report ('Latest' or 'Trending')
+        health_measurement (str): Health measure being analyzed
+        visualization_category (str): Category for visualization
+        data (pd.DataFrame): Analysis data
+
+        Returns:
+        Optional[Dict]: Health recommendations in JSON format or None if OpenAI client is not available
+        """
+        if not self.openai_client:
+            return None
+
+        try:
+            # Format data for the prompt
+            formatted_data = self.format_table(data)
+
+            # Create a more specific prompt that includes JSON structure requirements
+            json_prompt = f"""
+            {self.RECOMMENDATIONS_PROMPT}
+            
+            Please provide your response in the following JSON format:
+            {{
+                "recommendations": [
+                    {{
+                        "action": "string",
+                        "action_keyword": "string",
+                        "action_details": "string",
+                        "target_group": "string",
+                        "priority": integer
+                    }}
+                ],
+                "report_metadata": {{
+                    "report_type": "Latest" or "Trending",
+                    "health_measurement": "Overall", "Hypertension", "Stress", "Wellness", or "BMI",
+                    "visualization_category": "Overall", "By Age Range", "By Gender", "By BMI", "yearly", "quarterly", "monthly", or "weekly"
+                }}
+            }}
+            
+            Report Type: {report_type}
+            Health Measurement: {health_measurement}
+            Visualization Category: {visualization_category}
+            Data: {formatted_data}
+            """
+
+            response = self.openai_client.chat.completions.create(
+                model="o3-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a workplace health advisor. Always respond with valid JSON following the specified format."
+                    },
+                    {
+                        "role": "user",
+                        "content": json_prompt
+                    }
+                ]
+            )
+
+            # Parse and return the recommendations
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            print(f"Error generating health recommendations: {e}")
+            return None
 
     def run_analysis(
         self,
@@ -684,6 +782,7 @@ class StaffHealthAnalyzer:
         category: str,
         with_summary: bool = False,
         enable_display: bool = False,
+        with_recommendations: bool = False,
     ) -> Dict:
         """
         Run a complete analysis for the specified parameters
@@ -694,9 +793,10 @@ class StaffHealthAnalyzer:
         category (str): Category for latest report or time period for trending report
         with_summary (bool): Whether to include natural language summary
         enable_display (bool): Whether to display visualization
+        with_recommendations (bool): Whether to include health recommendations
 
         Returns:
-        Dict: Dictionary containing report data and optional summary
+        Dict: Dictionary containing report data and optional summary/recommendations
         """
         # Validate request
         self._validate_request(health_measure, category)
@@ -723,6 +823,14 @@ class StaffHealthAnalyzer:
             result["summary"] = self.get_report_summary(
                 report_type, health_measure, category, data
             )
+
+        # Add health recommendations if requested and available
+        if with_recommendations:
+            recommendations = self.generate_health_recommendations(
+                report_type, health_measure, category, data
+            )
+            if recommendations:
+                result["recommendations"] = recommendations
 
         # Display visualization if requested
         if enable_display:
@@ -849,11 +957,14 @@ if __name__ == "__main__":
         "password": config["db"]["password"],
     }
 
+    # Get API key from environment variable
+    api_key = os.getenv("OPENAI_API_KEY")
+
     # For mobile data
     mobile_analyzer = StaffHealthAnalyzer(
         data_path="staff_health_data.csv",
         mode="mobile",
-        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
+        api_key=api_key,
         db_config=db_config,
     )
 
@@ -861,17 +972,18 @@ if __name__ == "__main__":
     kiosk_analyzer = StaffHealthAnalyzer(
         data_path="staff_health_data_kiosk.csv",
         mode="kiosk",
-        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
+        api_key=api_key,
         db_config=db_config,
     )
 
     # Generate report
-    generated_report = kiosk_analyzer.run_analysis(
+    generated_report = mobile_analyzer.run_analysis(
         report_type="Latest",  # Latest | Trending
         health_measure="Overall",  # Overall | BMI | Hypertension | Stress | Wellness
         category="Age_range",  # Age_range, Gender, BMI, Overall | Weekly, Monthly, Quarterly, Yearly
-        with_summary=False,  # Set to True if have an API key
-        enable_display=False,  # Set to True to display visualization
+        with_summary=True,  # Set to True if have an API key
+        enable_display=True,  # Set to True to display visualization
+        with_recommendations=True,  # Set to True to include health recommendations
     )
 
     print("Generated Report:")
@@ -881,24 +993,3 @@ if __name__ == "__main__":
     if "summary" in generated_report:
         print("\nSummary:")
         print(generated_report["summary"])
-
-    # Example of generating all reports
-    """
-    # Generate and save all latest reports
-    print('Generating and saving latest reports...')
-    all_latest_reports = mobile_analyzer.generate_all_reports("Latest")
-    for key, report in all_latest_reports.items():
-        os.makedirs("reports/latest", exist_ok=True)
-        filename = f"reports/latest/{key}.csv"
-        report.to_csv(filename, index=False)
-        print(f"Saved {filename}")
-
-    # Generate and save all trending reports
-    print('Generating and saving trending reports...')
-    all_trending_reports = mobile_analyzer.generate_all_reports("Trending")
-    for key, report in all_trending_reports.items():
-        os.makedirs("reports/trending", exist_ok=True)
-        filename = f"reports/trending/{key}.csv"
-        report.to_csv(filename, index=False)
-        print(f"Saved {filename}")
-    """
