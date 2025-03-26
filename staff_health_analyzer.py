@@ -8,6 +8,7 @@ from enum import Enum
 from dotenv import load_dotenv
 from typing import Dict, Optional, Any, Tuple
 from functools import lru_cache
+import argparse
 
 
 # Load environment variables
@@ -23,7 +24,7 @@ ERROR_BMI_KIOSK = "BMI analysis not available in kiosk mode."
 # Database connection
 def create_db_engine():
     """Create SQLAlchemy engine from environment variables"""
-    db_url = f"postgresql+psycopg://{os.getenv('user')}:{os.getenv('pass')}@{os.getenv('host')}:{os.getenv('port')}/{os.getenv('dbname')}"
+    db_url = f"postgresql+psycopg://{os.getenv('user')}:{os.getenv('password')}@{os.getenv('host')}:{os.getenv('port')}/{os.getenv('dbname')}"
     return create_engine(db_url, echo=True, future=True)
 
 
@@ -110,7 +111,7 @@ class StaffHealthAnalyzer:
                     query = """
                     SELECT
                     to_timestamp(o.created_at/1000) as date,
-                    to_timestamp(o.updated_at/1000) as updated_at_datetime,
+                    o.user_id as staff_id,
                     u.gender as gender,
                     o.bmi as bmi,
                     o.stresslevel as stressLevel,
@@ -125,6 +126,7 @@ class StaffHealthAnalyzer:
                     query = """
                     SELECT 
                     to_timestamp(created_at/1000) as date,
+                    email as staff_id,
                     stresslevel as stressLevel,
                     wellnesslevel as wellnessLevel,
                     hypertensionrisk as hypertensionRisk,
@@ -151,7 +153,10 @@ class StaffHealthAnalyzer:
                 )
 
         # Convert date column to datetime
-        df["date"] = pd.to_datetime(df["date"])
+        df["date"] = pd.to_datetime(df["date"], format='mixed', dayfirst=True)
+
+        # Remove time component, keep only date
+        df["date"] = df["date"].dt.date
 
         # Handle demographic data based on mode
         df = self._handle_demographic_data(df)
@@ -163,10 +168,10 @@ class StaffHealthAnalyzer:
         df["original_bmi"] = df["bmi"].apply(self._categorize_bmi).replace("", np.nan)
 
         # Save original values for other health measures
-        df["original_stress"] = df["stressLevel"].fillna("").replace("", np.nan)
-        df["original_wellness"] = df["wellnessLevel"].fillna("").replace("", np.nan)
+        df["original_stress"] = df["stresslevel"].fillna("").replace("", np.nan)
+        df["original_wellness"] = df["wellnesslevel"].fillna("").replace("", np.nan)
         df["original_hypertension"] = (
-            df["hypertensionRisk"].fillna("").replace("", np.nan)
+            df["hypertensionrisk"].fillna("").replace("", np.nan)
         )
 
         # Sort data by staff_id and date
@@ -331,7 +336,7 @@ class StaffHealthAnalyzer:
         df_copy["hypertensionRisk"] = df_copy["original_hypertension"].map(
             self.HYPERTENSION_MAP
         )
-        df_copy["bmi"] = df_copy["original_bmi"].map(self.BMI_MAP)
+        df_copy["bmi_score"] = df_copy["original_bmi"].map(self.BMI_MAP)
 
         # Calculate overall health if not present
         if "overallHealth" not in df_copy.columns:
@@ -339,7 +344,7 @@ class StaffHealthAnalyzer:
                 0.25 * df_copy["stressLevel"]
                 + 0.35 * df_copy["wellnessLevel"]
                 + 0.25 * df_copy["hypertensionRisk"]
-                + 0.15 * df_copy["bmi"]
+                + 0.15 * df_copy["bmi_score"]
             )
 
             df_copy["overallHealth"] = overall_health_values.apply(
@@ -505,6 +510,9 @@ class StaffHealthAnalyzer:
     def _filter_by_time_period(self, time_period: str) -> pd.DataFrame:
         """Filter data and add time_period column based on selected time period"""
         df = self.df.copy()
+        
+        # Convert date objects back to datetime for datetime operations
+        df["date"] = pd.to_datetime(df["date"])
 
         if time_period == "Weekly":
             # Filter data for the last 6 weeks
@@ -863,49 +871,60 @@ class StaffHealthAnalyzer:
 
 # Main execution section
 if __name__ == "__main__":
-    # Set use_database flag
-    use_database = True  # Set to False to use CSV files instead
+    # Get connection type
+    use_database = True
+    
+    # Get data paths from environment variables
+    mobile_data_path = os.getenv("STAFF_HEALTH_DATA_MOBILE")
+    kiosk_data_path = os.getenv("STAFF_HEALTH_DATA_KIOSK")
+    
+    # Get API key from environment variable
+    api_key = os.getenv("OPENAI_API_KEY")
 
-    if use_database:
-        # For mobile data using database
-        mobile_analyzer = StaffHealthAnalyzer(
-            data_path="",  # This will trigger database fallback
-            mode=MODE_MOBILE,
-            api_key=os.environ.get("OPENAI_API_KEY"),
-        )
+    try:
+        # Initialize analyzers based on connection type
+        if use_database:
+            print("Using database connection...")
+            # For mobile data using database
+            mobile_analyzer = StaffHealthAnalyzer(
+                data_path="non_existent_file.csv",  # This will trigger database fallback
+                mode=MODE_MOBILE,
+                api_key=api_key,
+            )
 
-        # For kiosk data using database
-        kiosk_analyzer = StaffHealthAnalyzer(
-            data_path="",  # This will trigger database fallback
-            mode=MODE_KIOSK,
-            api_key=os.environ.get("OPENAI_API_KEY"),
-        )
-        
-        # Save raw data to CSV file
-        output_file = "kiosk_data_export.csv"
-        kiosk_analyzer.df.to_csv(output_file, index=False)
-        print(f"\nRaw kiosk data saved to {output_file}")
-    else:
-        # For mobile data using CSV
-        mobile_analyzer = StaffHealthAnalyzer(
-            data_path=os.environ.get("STAFF_HEALTH_DATA_MOBILE"),
-            mode=MODE_MOBILE,
-            api_key=os.environ.get("OPENAI_API_KEY"),
-        )
+            # For kiosk data using database
+            kiosk_analyzer = StaffHealthAnalyzer(
+                data_path="non_existent_file.csv",  # This will trigger database fallback
+                mode=MODE_KIOSK,
+                api_key=api_key,
+            )
+        else:
+            print("Using CSV files...")
+            if not mobile_data_path or not kiosk_data_path:
+                raise ValueError("CSV file paths not found in environment variables")
+                
+            # For mobile data using CSV
+            mobile_analyzer = StaffHealthAnalyzer(
+                data_path=mobile_data_path,
+                mode=MODE_MOBILE,
+                api_key=api_key,
+            )
 
-        # For kiosk data using CSV
-        kiosk_analyzer = StaffHealthAnalyzer(
-            data_path=os.environ.get("STAFF_HEALTH_DATA_KIOSK"),
-            mode=MODE_KIOSK,
-            api_key=os.environ.get("OPENAI_API_KEY"),
-        )
+            # For kiosk data using CSV
+            kiosk_analyzer = StaffHealthAnalyzer(
+                data_path=kiosk_data_path,
+                mode=MODE_KIOSK,
+                api_key=api_key,
+            )
+    except Exception as e:
+        print(f"Error: {str(e)}")
 
     # Example analyses
     print("\nGenerating Report...")
     generated_report = mobile_analyzer.run_analysis(
-        report_type="Trending",
-        health_measure="Hypertension",
-        category="Gender",
+        report_type="Latest",
+        health_measure="Overall",
+        category="Age_range",
         with_summary=False,
         enable_display=True,
     )

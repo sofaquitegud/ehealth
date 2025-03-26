@@ -7,6 +7,8 @@ import pandas as pd
 import os
 from enum import Enum
 from dotenv import load_dotenv
+import json
+from datetime import date, datetime
 
 # Import the StaffHealthAnalyzer class
 from staff_health_analyzer import (
@@ -21,6 +23,13 @@ from staff_health_analyzer import (
 
 # Load environment variables
 load_dotenv()
+
+# Custom JSON encoder to handle date objects
+class DateEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        return super().default(obj)
 
 # Create FastAPI app
 app = FastAPI(
@@ -58,6 +67,13 @@ class AnalysisMode(str, Enum):
     KIOSK = MODE_KIOSK
     MOBILE = MODE_MOBILE
 
+
+# Function to convert DataFrame to JSON-serializable format
+def dataframe_to_dict(df):
+    """Convert DataFrame to JSON-serializable dict with proper date handling"""
+    result = df.to_dict(orient="records")
+    # Use the custom encoder to handle date objects
+    return json.loads(json.dumps(result, cls=DateEncoder))
 
 # Dependency for getting the appropriate analyzer
 def get_analyzer(
@@ -150,8 +166,8 @@ async def analyze(
             enable_display=False,  # Disable visualization for API
         )
 
-        # Convert DataFrame to list of dicts for JSON serialization
-        result["data"] = result["data"].to_dict(orient="records")
+        # Convert DataFrame to list of dicts for JSON serialization with date handling
+        result["data"] = dataframe_to_dict(result["data"])
 
         return result
 
@@ -180,10 +196,10 @@ async def get_all_reports(
         # Generate all reports
         reports = analyzer.generate_all_reports(report_type)
 
-        # Convert DataFrames to lists of dicts for JSON serialization
+        # Convert DataFrames to lists of dicts for JSON serialization with date handling
         result = {}
         for key, df in reports.items():
-            result[key] = df.to_dict(orient="records")
+            result[key] = dataframe_to_dict(df)
 
         return result
 
@@ -198,8 +214,8 @@ async def get_all_reports(
 async def get_raw_data(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
     """Get raw data (this could be protected by authentication in production)"""
     try:
-        # Convert DataFrame to list of dicts for JSON serialization
-        return {"data": analyzer.df.to_dict(orient="records")}
+        # Convert DataFrame to list of dicts for JSON serialization with date handling
+        return {"data": dataframe_to_dict(analyzer.df)}
 
     except Exception as e:
         return JSONResponse(
