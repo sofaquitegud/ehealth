@@ -24,7 +24,7 @@ ERROR_BMI_KIOSK = "BMI analysis not available in kiosk mode."
 # Database connection
 def create_db_engine():
     """Create SQLAlchemy engine from environment variables"""
-    db_url = f"postgresql+psycopg://{os.getenv('user')}:{os.getenv('password')}@{os.getenv('host')}:{os.getenv('port')}/{os.getenv('dbname')}"
+    db_url = f"postgresql+psycopg://{os.getenv('user')}:{os.getenv('pass')}@{os.getenv('host')}:{os.getenv('port')}/{os.getenv('dbname')}"
     return create_engine(db_url, echo=True, future=True)
 
 
@@ -921,14 +921,14 @@ if __name__ == "__main__":
 
     # Example analyses
     print("\nGenerating Report...")
-    generated_report = mobile_analyzer.run_analysis(
-        report_type="Latest",
-        health_measure="Overall",
-        category="Age_range",
+    generated_report = kiosk_analyzer.run_analysis(
+        report_type="Trending",
+        health_measure="BMI",
+        category="Yearly",
         with_summary=False,
         enable_display=True,
     )
-    print("\nGenerated Report and Summary:")
+    print("\nGenerated Report:")
     print(generated_report["data"])
 
     # Print summary if available
