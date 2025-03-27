@@ -135,7 +135,7 @@ class StaffHealthAnalyzer:
                 )
 
         # Convert date column to datetime
-        df["date"] = pd.to_datetime(df["date"])
+        df["date"] = pd.to_datetime(df["date"], dayfirst=True)
 
         # Handle demographic data based on mode
         df = self._handle_demographic_data(df)
@@ -974,15 +974,13 @@ class StaffHealthAnalyzer:
 # Main execution section
 if __name__ == "__main__":
 
-    config = configparser.ConfigParser()
-    config.read("config.ini")
-
+    # Get database configuration from environment variables
     db_config = {
-        "host": config["db"]["host"],
-        "port": config["db"]["port"],
-        "dbname": config["db"]["dbname"],
-        "user": config["db"]["user"],
-        "password": config["db"]["password"],
+        "host": os.getenv("host"),
+        "port": os.getenv("port"),
+        "dbname": os.getenv("dbname"),
+        "user": os.getenv("user"),
+        "password": os.getenv("pass"),
     }
 
     # Get API key from environment variable
@@ -990,7 +988,7 @@ if __name__ == "__main__":
 
     # For mobile data
     mobile_analyzer = StaffHealthAnalyzer(
-        data_path="staff_health_data.csv",
+        data_path=os.getenv("STAFF_HEALTH_DATA_MOBILE"),
         mode="mobile",
         api_key=api_key,
         db_config=db_config,
@@ -998,7 +996,7 @@ if __name__ == "__main__":
 
     # For kiosk data
     kiosk_analyzer = StaffHealthAnalyzer(
-        data_path="staff_health_data_kiosk.csv",
+        data_path=os.getenv("STAFF_HEALTH_DATA_KIOSK"),
         mode="kiosk",
         api_key=api_key,
         db_config=db_config,
@@ -1021,3 +1019,8 @@ if __name__ == "__main__":
     if "summary" in generated_report:
         print("\nSummary:")
         print(generated_report["summary"])
+
+    # Print recommendations if available
+    if "recommendations" in generated_report:
+        print("\nRecommendations:")
+        print(generated_report["recommendations"])

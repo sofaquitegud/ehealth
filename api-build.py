@@ -4,7 +4,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any
 import pandas as pd
-import configparser
 import os
 from enum import Enum
 from dotenv import load_dotenv
@@ -29,26 +28,15 @@ app = FastAPI(
 )
 
 
-# Read configuration file
-def get_config():
-    """Get configuration from config.ini file"""
-    config = configparser.ConfigParser()
-    config.read("config.ini")
-    return config
-
-
-# Get database configuration from config.ini
-def get_db_config(config=None):
-    """Get database configuration from config.ini"""
-    if config is None:
-        config = get_config()
-
+# Get database configuration from environment variables
+def get_db_config():
+    """Get database configuration from environment variables"""
     return {
-        "host": config["db"]["host"],
-        "port": config["db"]["port"],
-        "dbname": config["db"]["dbname"],
-        "user": config["db"]["user"],
-        "password": config["db"]["password"],
+        "host": os.getenv("host"),
+        "port": os.getenv("port"),
+        "dbname": os.getenv("dbname"),
+        "user": os.getenv("user"),
+        "password": os.getenv("pass"),
     }
 
 
@@ -93,19 +81,17 @@ def get_analyzer(
     )
 ):
     """Get the appropriate StaffHealthAnalyzer instance based on mode"""
-    config = get_config()
-
     data_path = (
-        "staff_health_data.csv"
+        os.getenv("STAFF_HEALTH_DATA_MOBILE")
         if mode == AnalysisMode.MOBILE
-        else "staff_health_data_kiosk.csv"
+        else os.getenv("STAFF_HEALTH_DATA_KIOSK")
     )
 
     # Get API key from environment variable
     api_key = os.getenv("OPENAI_API_KEY")
 
     return StaffHealthAnalyzer(
-        data_path=data_path, mode=mode, api_key=api_key, db_config=get_db_config(config)
+        data_path=data_path, mode=mode, api_key=api_key, db_config=get_db_config()
     )
 
 
@@ -233,13 +219,13 @@ async def get_raw_data(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
 async def get_config_info():
     """Get non-sensitive configuration information"""
     try:
-        config = get_config()
+        db_config = get_db_config()
         return {
             "db": {
-                "host": config["db"]["host"],
-                "port": config["db"]["port"],
-                "dbname": config["db"]["dbname"],
-                "user": config["db"]["user"],
+                "host": db_config["host"],
+                "port": db_config["port"],
+                "dbname": db_config["dbname"],
+                "user": db_config["user"],
                 # Password is intentionally not included
             },
             "llm": {
