@@ -3,3 +3,5 @@ misc
 .env
 staff_health_data.csv
 staff_health_data_kiosk.csv
+kiosk_data_export.csv
+mobile_data_export.csv
