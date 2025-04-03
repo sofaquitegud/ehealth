@@ -3,13 +3,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import json
 from sqlalchemy import create_engine
 from enum import Enum
 from dotenv import load_dotenv
 from typing import Dict, Optional, Any, Tuple
 from functools import lru_cache
-import argparse
-
+from openai import OpenAI
 
 # Load environment variables
 load_dotenv()
@@ -66,6 +66,11 @@ class StaffHealthAnalyzer:
     AGE_BINS = [0, 25, 35, 45, 55, 100]
     AGE_LABELS = ["18-25", "26-35", "36-45", "46-55", "55+"]
 
+    RECOMMENDATIONS_PROMPT = """
+    Act as a workplace health advisor tasked with generating actionable recommendations to improve employee health based on data insights.
+    Analyze the provided data and generate prioritized recommendations.
+    """
+
     def __init__(
         self,
         data_path: str,
@@ -93,8 +98,8 @@ class StaffHealthAnalyzer:
         # Initialize mappings
         self._initialize_mappings()
 
-        # Initialize LLM if API key is provided
-        self.llm = self._initialize_llm(api_key)
+        # Initialize OpenAI if API key is provided
+        self.openai_client = self._initialize_openai_client(api_key)
 
     def _load_and_preprocess_data(self, data_path: str) -> pd.DataFrame:
         """Load and preprocess the dataset"""
@@ -139,13 +144,6 @@ class StaffHealthAnalyzer:
                 # Execute query
                 df = pd.read_sql_query(query, engine)
                 print(f"Successfully loaded data from database in {self.mode} mode")
-                
-                # Display raw data in terminal
-                print(f"\n----- RAW DATA FROM {self.mode} TABLE -----")
-                print(df.head(10))  # Display first 10 rows
-                print(f"\nTotal records: {len(df)}")
-                print(f"Columns: {df.columns.tolist()}")
-                print("-------------------------------------\n")
                 
             except Exception as db_error:
                 raise ValueError(
@@ -293,7 +291,7 @@ class StaffHealthAnalyzer:
         }
 
         # LLM system prompt
-        self.system_prompt = """Act as a health data analyst tasked with summarizing the health status of employees in a company. Below are the specifications for the report:
+        self.SYSTEM_PROMPT = """Act as a health data analyst tasked with summarizing the health status of employees in a company. Below are the specifications for the report:
         *Report Type*: {report_type}  
         *Health Measurement*: {health_measurement}  
         *Visualization Category*: {visualization_category}  
@@ -365,18 +363,17 @@ class StaffHealthAnalyzer:
         else:
             return "risky"
 
-    def _initialize_llm(self, api_key: Optional[str]) -> Any:
-        """Initialize LLM if API key is provided"""
+    def _initialize_openai_client(self, api_key: Optional[str]) -> Optional[OpenAI]:
+        """Initialize OpenAI client if API key is provided"""
         if not api_key:
-            return None
-
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                return None
+        
         try:
-            from langchain_openai import ChatOpenAI
-
-            os.environ["OPENAI_API_KEY"] = api_key
-            return ChatOpenAI(model="gpt-4o")
-        except ImportError:
-            print("Import unsuccessful. Please `pip install langchain_openai`")
+            return OpenAI(api_key=api_key)
+        except Exception as e:
+            print(f"Failed to initialize OpenAI client: {e}")
             return None
 
     def _validate_request(self, health_measure: str, category: str = None) -> None:
@@ -692,14 +689,14 @@ class StaffHealthAnalyzer:
         Returns:
         str: Natural language summary or message if LLM not available
         """
-        if not self.llm:
+        if not self.openai_client:
             return (
-                "LLM not available. Set API key to enable natural language summaries."
+                "OpenAI client is not available. Set API key to enable natural language summaries and recommendations."
             )
 
         formatted_table = self.format_table(data)
 
-        formatted_prompt = self.system_prompt.format(
+        formatted_prompt = self.SYSTEM_PROMPT.format(
             report_type=report_type,
             health_measurement=health_measure,
             visualization_category=category,
@@ -707,9 +704,125 @@ class StaffHealthAnalyzer:
         )
 
         try:
-            return self.llm.invoke(formatted_prompt).content
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": self.SYSTEM_PROMPT
+                    },
+                    {
+                        "role": "user",
+                        "content": formatted_prompt
+                    }
+                ]
+            )
+
+            return response.choices[0].message.content
         except Exception as e:
             return f"Error generating summary: {str(e)}"
+        
+    def generate_health_recommendations(
+        self,
+        report_type: str,
+        health_measurement: str,
+        visualization_category: str,
+        data: pd.DataFrame,
+    ) -> Optional[Dict]:
+        """
+        Generate health recommendations based on the analysis data using OpenAI
+
+        Parameters:
+        report_type (str): Type of report ('Latest' or 'Trending')
+        health_measurement (str): Health measure being analyzed
+        visualization_category (str): Category for visualization
+        data (pd.DataFrame): Analysis data
+
+        Returns:
+        Optional[Dict]: Health recommendations in JSON format or None if OpenAI client is not available
+        """
+        if not self.openai_client:
+            return None
+
+        try:
+            # Format data for the prompt
+            formatted_data = self.format_table(data)
+
+            response = self.openai_client.responses.create(
+                model="o3-mini",  # Use your preferred model
+                input=[
+                    {
+                        "role": "system", 
+                        "content": self.RECOMMENDATIONS_PROMPT
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"""
+                        Report Type: {report_type}
+                        Health Measurement: {health_measurement}
+                        Visualization Category: {visualization_category}
+                        Data: {formatted_data}
+                        """
+                    }
+                ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "health_recommendations",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "recommendations": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "action": {"type": "string"},
+                                            "action_keyword": {"type": "string"}, 
+                                            "action_details": {"type": "string"},
+                                            "target_group": {"type": "string"},
+                                            "priority": {
+                                                "type": "integer"
+                                            }
+                                        },
+                                        "required": ["action","action_keyword", "action_details", "target_group", "priority"],
+                                        "additionalProperties": False
+                                    }
+                                },
+                                "report_metadata": {
+                                    "type": "object",
+                                    "properties": {
+                                        "report_type": {
+                                            "type": "string",
+                                            "enum": ["Latest", "Trending"]
+                                        },
+                                        "health_measurement": {
+                                            "type": "string",
+                                            "enum": ["Overall", "Hypertension", "Stress", "Wellness", "BMI"]
+                                        },
+                                        "visualization_category": {
+                                            "type": "string",
+                                            "enum": ["Overall", "By Age Range", "By Gender", "By BMI", "yearly", "quarterly","monthly", "weekly"]
+                                        }
+                                    },
+                                    "required": ["report_type", "health_measurement", "visualization_category"],
+                                    "additionalProperties": False
+                                }
+                            },
+                            "required": ["recommendations", "report_metadata"],
+                            "additionalProperties": False
+                        },
+                        "strict": True
+                    }
+                }
+            )
+
+            # Parse the output
+            return json.loads(response.output_text)
+
+        except Exception as e:
+            print(f"Error generating health recommendations: {e}")
+            return None
 
     def run_analysis(
         self,
@@ -718,6 +831,7 @@ class StaffHealthAnalyzer:
         category: str,
         with_summary: bool = False,
         enable_display: bool = False,
+        with_recommendations: bool = False
     ) -> Dict:
         """
         Run a complete analysis for the specified parameters
@@ -757,6 +871,14 @@ class StaffHealthAnalyzer:
             result["summary"] = self.get_report_summary(
                 report_type, health_measure, category, data
             )
+
+        # Add health recommendation if requested and available
+        if with_recommendations:
+            recommendations = self.generate_health_recommendations(
+                report_type, health_measure, category, data
+            )
+            if recommendations:
+                result["recommendations"] = recommendations
 
         # Display visualization if requested
         if enable_display:
@@ -921,12 +1043,13 @@ if __name__ == "__main__":
 
     # Example analyses
     print("\nGenerating Report...")
-    generated_report = kiosk_analyzer.run_analysis(
-        report_type="Trending",
-        health_measure="BMI",
-        category="Yearly",
+    generated_report = mobile_analyzer.run_analysis(
+        report_type="Latest",
+        health_measure="Overall",
+        category="Age_range",
         with_summary=False,
         enable_display=True,
+        with_recommendations=True
     )
     print("\nGenerated Report:")
     print(generated_report["data"])
@@ -935,3 +1058,8 @@ if __name__ == "__main__":
     if "summary" in generated_report:
         print("\nSummary:")
         print(generated_report["summary"])
+
+    # Print recommendations if available
+    if "recommendations" in generated_report:
+        print("\nRecommendations:")
+        print(generated_report["recommendations"])

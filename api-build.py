@@ -51,6 +51,9 @@ class AnalysisRequest(BaseModel):
     with_summary: bool = Field(
         False, description="Whether to include natural language summary"
     )
+    with_recommendations: bool = Field(
+        False, description="Whether to include health recommendations"
+    )
 
 
 class AnalysisResponse(BaseModel):
@@ -60,6 +63,7 @@ class AnalysisResponse(BaseModel):
     mode: str
     data: List[Dict[str, Any]]
     summary: Optional[str] = None
+    recommendations: Optional[Dict[str, Any]] = None
 
 
 # Define API mode enum
@@ -121,6 +125,7 @@ async def analyze(
         - For Latest reports: Overall, Age_range, Gender, BMI
         - For Trending reports: Weekly, Monthly, Quarterly, Yearly
     - **with_summary**: Set to true to include AI-generated natural language summary
+    - **with_recommendations**: Set to true to include AI-generated health recommendations
     - **mode**: Set application mode 'mobile' (default) or 'kiosk' (BMI not supported)
     """
     try:
@@ -163,16 +168,23 @@ async def analyze(
             health_measure=request.health_measure,
             category=request.category,
             with_summary=request.with_summary,
+            with_recommendations=request.with_recommendations,
             enable_display=False,  # Disable visualization for API
         )
 
         # Convert DataFrame to list of dicts for JSON serialization with date handling
         result["data"] = dataframe_to_dict(result["data"])
 
+        # Handle recommendations with date objects if they exist
+        if result.get("recommendations") and isinstance(result["recommendations"], dict):
+            result["recommendations"] = json.loads(json.dumps(result["recommendations"], cls=DateEncoder))
+
         return result
 
     except ValueError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return JSONResponse(
+            status_code=400, content={"error": str(e)}
+        )
 
     except Exception as e:
         return JSONResponse(
