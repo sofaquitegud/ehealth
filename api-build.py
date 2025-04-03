@@ -7,14 +7,8 @@ import pandas as pd
 import os
 from enum import Enum
 from dotenv import load_dotenv
-<<<<<<< HEAD
-
-# Load environment variables from .env file
-load_dotenv()
-=======
 import json
 from datetime import date, datetime
->>>>>>> test-features
 
 # Import the StaffHealthAnalyzer class
 from staff_health_analyzer import (
@@ -44,22 +38,6 @@ app = FastAPI(
     version="1.2.0",
 )
 
-<<<<<<< HEAD
-
-# Get database configuration from environment variables
-def get_db_config():
-    """Get database configuration from environment variables"""
-    return {
-        "host": os.getenv("host"),
-        "port": os.getenv("port"),
-        "dbname": os.getenv("dbname"),
-        "user": os.getenv("user"),
-        "password": os.getenv("pass"),
-    }
-
-
-=======
->>>>>>> test-features
 # Define Pydantic models for request/response
 class AnalysisRequest(BaseModel):
     report_type: str = Field("Latest", description="Latest or Trending")
@@ -108,19 +86,6 @@ def get_analyzer(
     )
 ):
     """Get the appropriate StaffHealthAnalyzer instance based on mode"""
-<<<<<<< HEAD
-    data_path = (
-        os.getenv("STAFF_HEALTH_DATA_MOBILE")
-        if mode == AnalysisMode.MOBILE
-        else os.getenv("STAFF_HEALTH_DATA_KIOSK")
-    )
-
-    # Get API key from environment variable
-    api_key = os.getenv("OPENAI_API_KEY")
-
-    return StaffHealthAnalyzer(
-        data_path=data_path, mode=mode, api_key=api_key, db_config=get_db_config()
-=======
     # Get API key from environment variables
     api_key = os.getenv("OPENAI_API_KEY")
 
@@ -131,7 +96,6 @@ def get_analyzer(
         data_path=data_path,
         mode=mode,
         api_key=api_key
->>>>>>> test-features
     )
 
 
@@ -206,7 +170,6 @@ async def analyze(
             with_summary=request.with_summary,
             with_recommendations=request.with_recommendations,
             enable_display=False,  # Disable visualization for API
-            with_recommendations=request.with_recommendations,
         )
 
         # Convert DataFrame to list of dicts for JSON serialization with date handling
@@ -277,22 +240,12 @@ async def get_raw_data(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
 async def get_config_info():
     """Get non-sensitive configuration information"""
     try:
-<<<<<<< HEAD
-        db_config = get_db_config()
-        return {
-            "db": {
-                "host": db_config["host"],
-                "port": db_config["port"],
-                "dbname": db_config["dbname"],
-                "user": db_config["user"],
-=======
         return {
             "db": {
                 "host": os.getenv("host"),
                 "port": os.getenv("port"),
                 "dbname": os.getenv("dbname"),
                 "user": os.getenv("user"),
->>>>>>> test-features
                 # Password is intentionally not included
             },
             "llm": {
