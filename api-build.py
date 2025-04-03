@@ -7,9 +7,14 @@ import pandas as pd
 import os
 from enum import Enum
 from dotenv import load_dotenv
+<<<<<<< HEAD
 
 # Load environment variables from .env file
 load_dotenv()
+=======
+import json
+from datetime import date, datetime
+>>>>>>> test-features
 
 # Import the StaffHealthAnalyzer class
 from staff_health_analyzer import (
@@ -18,15 +23,28 @@ from staff_health_analyzer import (
     VisualizationCategory,
     TimePeriod,
     ReportType,
+    MODE_KIOSK,
+    MODE_MOBILE,
 )
+
+# Load environment variables
+load_dotenv()
+
+# Custom JSON encoder to handle date objects
+class DateEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        return super().default(obj)
 
 # Create FastAPI app
 app = FastAPI(
     title="Staff Health Analyzer API",
     description="API for analyzing and reporting staff health metrics",
-    version="1.0.0",
+    version="1.2.0",
 )
 
+<<<<<<< HEAD
 
 # Get database configuration from environment variables
 def get_db_config():
@@ -40,6 +58,8 @@ def get_db_config():
     }
 
 
+=======
+>>>>>>> test-features
 # Define Pydantic models for request/response
 class AnalysisRequest(BaseModel):
     report_type: str = Field("Latest", description="Latest or Trending")
@@ -70,9 +90,16 @@ class AnalysisResponse(BaseModel):
 
 # Define API mode enum
 class AnalysisMode(str, Enum):
-    KIOSK = "kiosk"
-    MOBILE = "mobile"
+    KIOSK = MODE_KIOSK
+    MOBILE = MODE_MOBILE
 
+
+# Function to convert DataFrame to JSON-serializable format
+def dataframe_to_dict(df):
+    """Convert DataFrame to JSON-serializable dict with proper date handling"""
+    result = df.to_dict(orient="records")
+    # Use the custom encoder to handle date objects
+    return json.loads(json.dumps(result, cls=DateEncoder))
 
 # Dependency for getting the appropriate analyzer
 def get_analyzer(
@@ -81,6 +108,7 @@ def get_analyzer(
     )
 ):
     """Get the appropriate StaffHealthAnalyzer instance based on mode"""
+<<<<<<< HEAD
     data_path = (
         os.getenv("STAFF_HEALTH_DATA_MOBILE")
         if mode == AnalysisMode.MOBILE
@@ -92,6 +120,18 @@ def get_analyzer(
 
     return StaffHealthAnalyzer(
         data_path=data_path, mode=mode, api_key=api_key, db_config=get_db_config()
+=======
+    # Get API key from environment variables
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    # Use empty string to trigger database fallback
+    data_path = ""
+
+    return StaffHealthAnalyzer(
+        data_path=data_path,
+        mode=mode,
+        api_key=api_key
+>>>>>>> test-features
     )
 
 
@@ -104,7 +144,7 @@ async def root():
 # Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    return {"status": "Available"}
 
 
 # Analyze endpoint
@@ -112,7 +152,18 @@ async def health_check():
 async def analyze(
     request: AnalysisRequest, analyzer: StaffHealthAnalyzer = Depends(get_analyzer)
 ):
-    """Generate a health analysis report based on specified parameters"""
+    """
+    Generate a health analysis report based on specified parameters
+
+    - **report_type**: 'Latest' for current snapshot or 'Trending' for time-based analysis
+    - **health_measure**: The health metric to analyze (Overall, Hypertension, BMI, Stress, Wellness)
+    - **category**:
+        - For Latest reports: Overall, Age_range, Gender, BMI
+        - For Trending reports: Weekly, Monthly, Quarterly, Yearly
+    - **with_summary**: Set to true to include AI-generated natural language summary
+    - **with_recommendations**: Set to true to include AI-generated health recommendations
+    - **mode**: Set application mode 'mobile' (default) or 'kiosk' (BMI not supported)
+    """
     try:
         # Validate enum values
         if request.report_type not in [rt.value for rt in ReportType]:
@@ -153,17 +204,24 @@ async def analyze(
             health_measure=request.health_measure,
             category=request.category,
             with_summary=request.with_summary,
+            with_recommendations=request.with_recommendations,
             enable_display=False,  # Disable visualization for API
             with_recommendations=request.with_recommendations,
         )
 
-        # Convert DataFrame to list of dicts for JSON serialization
-        result["data"] = result["data"].to_dict(orient="records")
+        # Convert DataFrame to list of dicts for JSON serialization with date handling
+        result["data"] = dataframe_to_dict(result["data"])
+
+        # Handle recommendations with date objects if they exist
+        if result.get("recommendations") and isinstance(result["recommendations"], dict):
+            result["recommendations"] = json.loads(json.dumps(result["recommendations"], cls=DateEncoder))
 
         return result
 
     except ValueError as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+        return JSONResponse(
+            status_code=400, content={"error": str(e)}
+        )
 
     except Exception as e:
         return JSONResponse(
@@ -187,10 +245,10 @@ async def get_all_reports(
         # Generate all reports
         reports = analyzer.generate_all_reports(report_type)
 
-        # Convert DataFrames to lists of dicts for JSON serialization
+        # Convert DataFrames to lists of dicts for JSON serialization with date handling
         result = {}
         for key, df in reports.items():
-            result[key] = df.to_dict(orient="records")
+            result[key] = dataframe_to_dict(df)
 
         return result
 
@@ -205,8 +263,8 @@ async def get_all_reports(
 async def get_raw_data(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
     """Get raw data (this could be protected by authentication in production)"""
     try:
-        # Convert DataFrame to list of dicts for JSON serialization
-        return {"data": analyzer.df.to_dict(orient="records")}
+        # Convert DataFrame to list of dicts for JSON serialization with date handling
+        return {"data": dataframe_to_dict(analyzer.df)}
 
     except Exception as e:
         return JSONResponse(
@@ -219,6 +277,7 @@ async def get_raw_data(analyzer: StaffHealthAnalyzer = Depends(get_analyzer)):
 async def get_config_info():
     """Get non-sensitive configuration information"""
     try:
+<<<<<<< HEAD
         db_config = get_db_config()
         return {
             "db": {
@@ -226,6 +285,14 @@ async def get_config_info():
                 "port": db_config["port"],
                 "dbname": db_config["dbname"],
                 "user": db_config["user"],
+=======
+        return {
+            "db": {
+                "host": os.getenv("host"),
+                "port": os.getenv("port"),
+                "dbname": os.getenv("dbname"),
+                "user": os.getenv("user"),
+>>>>>>> test-features
                 # Password is intentionally not included
             },
             "llm": {

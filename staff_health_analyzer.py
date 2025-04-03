@@ -1,25 +1,27 @@
 # Import Libraries
-import configparser
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import psycopg2
-from enum import Enum
-from typing import Dict, Optional, Any, List
-from functools import lru_cache
 import json
-from openai import OpenAI
-from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from enum import Enum
+from typing import Dict, Optional, Any
+from functools import lru_cache
 
-# Load environment variables from .env file
-load_dotenv()
 
 # Constants
 DEFAULT_BMI_VALUE = 22.0
 MODE_KIOSK = "kiosk"
 MODE_MOBILE = "mobile"
 ERROR_BMI_KIOSK = "BMI analysis not available in kiosk mode."
+
+
+# Database connection
+def create_db_engine():
+    """Create SQLAlchemy engine from environment variables"""
+    db_url = f"postgresql+psycopg://{os.getenv('user')}:{os.getenv('pass')}@{os.getenv('host')}:{os.getenv('port')}/{os.getenv('dbname')}"
+    return create_engine(db_url, echo=True, future=True)
 
 
 class HealthMeasure(Enum):
@@ -60,17 +62,11 @@ class StaffHealthAnalyzer:
     AGE_BINS = [0, 25, 35, 45, 55, 100]
     AGE_LABELS = ["18-25", "26-35", "36-45", "46-55", "55+"]
 
-    # System prompt for health recommendations
-    RECOMMENDATIONS_PROMPT = """  
-    Act as a workplace health advisor tasked with generating actionable recommendations to improve employee health based on data insights. Analyze the provided data and generate prioritized recommendations.
-    """
-
     def __init__(
         self,
         data_path: str,
         api_key: Optional[str] = None,
         mode: str = MODE_MOBILE,
-        db_config: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the health analyzer with staff health data
@@ -79,7 +75,6 @@ class StaffHealthAnalyzer:
         data_path (str): Path to the CSV file with staff health data
         api_key (str, optional): OpenAI API key for natural language summaries and recommendations
         mode (str): Analysis mode - 'kiosk' or 'mobile'
-        db_config (dict, optional): Database configuration for PostgreSQL connection
         """
         # Validate and store the mode
         self.mode = mode.lower()
@@ -88,17 +83,14 @@ class StaffHealthAnalyzer:
                 f"Invalid mode: {mode}. Must be '{MODE_KIOSK}' or '{MODE_MOBILE}'"
             )
 
-        # Store database configuration
-        self.db_config = db_config
-
         # Load and preprocess the dataset
         self.df = self._load_and_preprocess_data(data_path)
 
         # Initialize mappings
         self._initialize_mappings()
 
-        # Initialize OpenAI client if API key is provided
-        self.openai_client = self._initialize_openai_client(api_key)
+        # Initialize LLM if API key is provided
+        self.llm = self._initialize_llm(api_key)
 
     def _load_and_preprocess_data(self, data_path: str) -> pd.DataFrame:
         """Load and preprocess the dataset"""
@@ -107,35 +99,50 @@ class StaffHealthAnalyzer:
             df = pd.read_csv(data_path)
         except Exception as e:
             print(f"Failed to load CSV data: {e}")
-            if self.db_config:
-                try:
-                    conn = psycopg2.connect(**self.db_config)
+            try:
+                # Create database engine
+                engine = create_db_engine()
 
-                    if self.mode == MODE_MOBILE:
-                        query = """
-                            SELECT created_at AS date, username AS staff_id, gender, age, bmi, stressLevel, wellnessLevel, hypertensionRisk
-                            FROM mobile_table
-                            """
-                    else:
-                        query = """
-                            SELECT created_at AS date, email AS staff_id, stressLevel, wellnessLevel, hypertensionRisk
-                            FROM kiosk_table
-                        """
-
-                    df = pd.read_sql_query(query, conn)
-                    conn.close()
-                    print(f"Successfully loaded data from database in {self.mode} mode")
-                except Exception as db_error:
-                    raise ValueError(
-                        f"Failed to load data from both CSV and database: {db_error}"
-                    )
-            else:
+                if self.mode == MODE_MOBILE:
+                    query = """
+                    SELECT
+                    to_timestamp(o.created_at/1000) as date,
+                    o.user_id as staff_id,
+                    u.gender as gender,
+                    o.bmi as bmi,
+                    o.stresslevel as stressLevel,
+                    o.wellnesslevel as wellnessLevel,
+                    o.hypertensionrisk as hypertensionRisk,
+                    o.age as age
+                    FROM obsv_latest_v2 o
+                    INNER JOIN users u
+                    on o.user_id = u.user_id
+                    """
+                elif self.mode == MODE_KIOSK:
+                    query = """
+                    SELECT 
+                    to_timestamp(created_at/1000) as date,
+                    email as staff_id,
+                    stresslevel as stressLevel,
+                    wellnesslevel as wellnessLevel,
+                    hypertensionrisk as hypertensionRisk,
+                    age,
+                    gender
+                    FROM kiosk_table"""
+                else:
+                    raise ValueError(f"Invalid mode: {self.mode}")
+                
+                # Execute query
+                df = pd.read_sql_query(query, engine)
+                print(f"Successfully loaded data from database in {self.mode} mode")
+                
+            except Exception as db_error:
                 raise ValueError(
-                    "Database configuration not provided and CSV file not found"
+                    f"Failed to load data from both CSV and database: {db_error}"
                 )
 
         # Convert date column to datetime
-        df["date"] = pd.to_datetime(df["date"], dayfirst=True)
+        df["date"] = pd.to_datetime(df["date"])
 
         # Handle demographic data based on mode
         df = self._handle_demographic_data(df)
@@ -147,10 +154,10 @@ class StaffHealthAnalyzer:
         df["original_bmi"] = df["bmi"].apply(self._categorize_bmi).replace("", np.nan)
 
         # Save original values for other health measures
-        df["original_stress"] = df["stressLevel"].fillna("").replace("", np.nan)
-        df["original_wellness"] = df["wellnessLevel"].fillna("").replace("", np.nan)
+        df["original_stress"] = df["stresslevel"].fillna("").replace("", np.nan)
+        df["original_wellness"] = df["wellnesslevel"].fillna("").replace("", np.nan)
         df["original_hypertension"] = (
-            df["hypertensionRisk"].fillna("").replace("", np.nan)
+            df["hypertensionrisk"].fillna("").replace("", np.nan)
         )
 
         # Sort data by staff_id and date
@@ -315,7 +322,7 @@ class StaffHealthAnalyzer:
         df_copy["hypertensionRisk"] = df_copy["original_hypertension"].map(
             self.HYPERTENSION_MAP
         )
-        df_copy["bmi"] = df_copy["original_bmi"].map(self.BMI_MAP)
+        df_copy["bmi_score"] = df_copy["original_bmi"].map(self.BMI_MAP)
 
         # Calculate overall health if not present
         if "overallHealth" not in df_copy.columns:
@@ -323,7 +330,7 @@ class StaffHealthAnalyzer:
                 0.25 * df_copy["stressLevel"]
                 + 0.35 * df_copy["wellnessLevel"]
                 + 0.25 * df_copy["hypertensionRisk"]
-                + 0.15 * df_copy["bmi"]
+                + 0.15 * df_copy["bmi_score"]
             )
 
             df_copy["overallHealth"] = overall_health_values.apply(
@@ -344,13 +351,10 @@ class StaffHealthAnalyzer:
         else:
             return "risky"
 
-    def _initialize_openai_client(self, api_key: Optional[str]) -> Optional[OpenAI]:
-        """Initialize OpenAI client if API key is provided"""
+    def _initialize_llm(self, api_key: Optional[str]) -> Any:
+        """Initialize LLM if API key is provided"""
         if not api_key:
-            # Try to get API key from environment variable
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                return None
+            return None
 
         try:
             return OpenAI(api_key=api_key)
@@ -489,6 +493,9 @@ class StaffHealthAnalyzer:
     def _filter_by_time_period(self, time_period: str) -> pd.DataFrame:
         """Filter data and add time_period column based on selected time period"""
         df = self.df.copy()
+        
+        # Convert date objects back to datetime for datetime operations
+        df["date"] = pd.to_datetime(df["date"])
 
         if time_period == "Weekly":
             # Filter data for the last 6 weeks
@@ -670,7 +677,7 @@ class StaffHealthAnalyzer:
         """
         if not self.openai_client:
             return (
-                "OpenAI client not available. Set API key to enable natural language summaries and recommendations."
+                "LLM not available. Set API key to enable natural language summaries."
             )
 
         formatted_table = self.format_table(data)
@@ -700,6 +707,108 @@ class StaffHealthAnalyzer:
             return response.choices[0].message.content
         except Exception as e:
             return f"Error generating summary: {str(e)}"
+        
+    def generate_health_recommendations(
+        self,
+        report_type: str,
+        health_measurement: str,
+        visualization_category: str,
+        data: pd.DataFrame,
+    ) -> Optional[Dict]:
+        """
+        Generate health recommendations based on the analysis data using OpenAI
+
+        Parameters:
+        report_type (str): Type of report ('Latest' or 'Trending')
+        health_measurement (str): Health measure being analyzed
+        visualization_category (str): Category for visualization
+        data (pd.DataFrame): Analysis data
+
+        Returns:
+        Optional[Dict]: Health recommendations in JSON format or None if OpenAI client is not available
+        """
+        if not self.openai_client:
+            return None
+
+        try:
+            # Format data for the prompt
+            formatted_data = self.format_table(data)
+
+            response = self.openai_client.responses.create(
+                model="o3-mini",  # Use your preferred model
+                input=[
+                    {
+                        "role": "system", 
+                        "content": self.RECOMMENDATIONS_PROMPT
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"""
+                        Report Type: {report_type}
+                        Health Measurement: {health_measurement}
+                        Visualization Category: {visualization_category}
+                        Data: {formatted_data}
+                        """
+                    }
+                ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "health_recommendations",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "recommendations": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "action": {"type": "string"},
+                                            "action_keyword": {"type": "string"}, 
+                                            "action_details": {"type": "string"},
+                                            "target_group": {"type": "string"},
+                                            "priority": {
+                                                "type": "integer"
+                                            }
+                                        },
+                                        "required": ["action","action_keyword", "action_details", "target_group", "priority"],
+                                        "additionalProperties": False
+                                    }
+                                },
+                                "report_metadata": {
+                                    "type": "object",
+                                    "properties": {
+                                        "report_type": {
+                                            "type": "string",
+                                            "enum": ["Latest", "Trending"]
+                                        },
+                                        "health_measurement": {
+                                            "type": "string",
+                                            "enum": ["Overall", "Hypertension", "Stress", "Wellness", "BMI"]
+                                        },
+                                        "visualization_category": {
+                                            "type": "string",
+                                            "enum": ["Overall", "By Age Range", "By Gender", "By BMI", "yearly", "quarterly","monthly", "weekly"]
+                                        }
+                                    },
+                                    "required": ["report_type", "health_measurement", "visualization_category"],
+                                    "additionalProperties": False
+                                }
+                            },
+                            "required": ["recommendations", "report_metadata"],
+                            "additionalProperties": False
+                        },
+                        "strict": True
+                    }
+                }
+            )
+
+            # Parse the output
+            return json.loads(response.output_text)
+
+        except Exception as e:
+            print(f"Error generating health recommendations: {e}")
+            return None
 
     def generate_health_recommendations(
         self,
@@ -810,7 +919,6 @@ class StaffHealthAnalyzer:
         category: str,
         with_summary: bool = False,
         enable_display: bool = False,
-        with_recommendations: bool = False,
     ) -> Dict:
         """
         Run a complete analysis for the specified parameters
@@ -851,14 +959,6 @@ class StaffHealthAnalyzer:
             result["summary"] = self.get_report_summary(
                 report_type, health_measure, category, data
             )
-
-        # Add health recommendations if requested and available
-        if with_recommendations:
-            recommendations = self.generate_health_recommendations(
-                report_type, health_measure, category, data
-            )
-            if recommendations:
-                result["recommendations"] = recommendations
 
         # Display visualization if requested
         if enable_display:
@@ -974,45 +1074,42 @@ class StaffHealthAnalyzer:
 # Main execution section
 if __name__ == "__main__":
 
-    # Get database configuration from environment variables
-    db_config = {
-        "host": os.getenv("host"),
-        "port": os.getenv("port"),
-        "dbname": os.getenv("dbname"),
-        "user": os.getenv("user"),
-        "password": os.getenv("pass"),
-    }
+    config = configparser.ConfigParser()
+    config.read("config.ini")
 
-    # Get API key from environment variable
-    api_key = os.getenv("OPENAI_API_KEY")
+    db_config = {
+        "host": config["db"]["host"],
+        "port": config["db"]["port"],
+        "dbname": config["db"]["dbname"],
+        "user": config["db"]["user"],
+        "password": config["db"]["password"],
+    }
 
     # For mobile data
     mobile_analyzer = StaffHealthAnalyzer(
-        data_path=os.getenv("STAFF_HEALTH_DATA_MOBILE"),
+        data_path="staff_health_data.csv",
         mode="mobile",
-        api_key=api_key,
+        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
         db_config=db_config,
     )
 
     # For kiosk data
     kiosk_analyzer = StaffHealthAnalyzer(
-        data_path=os.getenv("STAFF_HEALTH_DATA_KIOSK"),
+        data_path="staff_health_data_kiosk.csv",
         mode="kiosk",
-        api_key=api_key,
+        api_key=os.environ.get("OPENAI_API_KEY", config["llm"]["api_key"]),
         db_config=db_config,
     )
 
     # Generate report
-    generated_report = mobile_analyzer.run_analysis(
+    generated_report = kiosk_analyzer.run_analysis(
         report_type="Latest",  # Latest | Trending
         health_measure="Overall",  # Overall | BMI | Hypertension | Stress | Wellness
         category="Age_range",  # Age_range, Gender, BMI, Overall | Weekly, Monthly, Quarterly, Yearly
-        with_summary=True,  # Set to True if have an API key
-        enable_display=True,  # Set to True to display visualization
-        with_recommendations=True,  # Set to True to include health recommendations
+        with_summary=False,  # Set to True if have an API key
+        enable_display=False,  # Set to True to display visualization
     )
-
-    print("Generated Report:")
+    print("\nGenerated Report:")
     print(generated_report["data"])
 
     # Print summary if available
@@ -1020,7 +1117,23 @@ if __name__ == "__main__":
         print("\nSummary:")
         print(generated_report["summary"])
 
-    # Print recommendations if available
-    if "recommendations" in generated_report:
-        print("\nRecommendations:")
-        print(generated_report["recommendations"])
+    # Example of generating all reports
+    """
+    # Generate and save all latest reports
+    print('Generating and saving latest reports...')
+    all_latest_reports = mobile_analyzer.generate_all_reports("Latest")
+    for key, report in all_latest_reports.items():
+        os.makedirs("reports/latest", exist_ok=True)
+        filename = f"reports/latest/{key}.csv"
+        report.to_csv(filename, index=False)
+        print(f"Saved {filename}")
+
+    # Generate and save all trending reports
+    print('Generating and saving trending reports...')
+    all_trending_reports = mobile_analyzer.generate_all_reports("Trending")
+    for key, report in all_trending_reports.items():
+        os.makedirs("reports/trending", exist_ok=True)
+        filename = f"reports/trending/{key}.csv"
+        report.to_csv(filename, index=False)
+        print(f"Saved {filename}")
+    """
